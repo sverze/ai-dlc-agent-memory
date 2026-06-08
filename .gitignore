@@ -1,0 +1,42 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+*.so
+
+# Virtual environments (uv)
+.venv/
+venv/
+env/
+# Note: uv.lock IS committed (NFR6 — reproducible, pinned deps)
+
+# Testing / coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.mypy_cache/
+.ruff_cache/
+
+# Secrets / local config
+.env
+.env.*
+!.env.example
+
+# IDEs / editors
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local service data (Neo4j / Langfuse / Graphiti scratch)
+data/
+*.log
