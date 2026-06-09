@@ -50,8 +50,15 @@ No agents, no Graphiti, no LLM calls yet.
 | `src/agentic_memory/fsm.py` | `FSM` orchestrator: `intake → analysis ⇄ clarification → decision (+ escalation)`, whitelist transitions, clarify-round cap with forced escalation, `replay_final_state()` | ✅ Done |
 | `src/agentic_memory/models.py` | `ModelClient` seam (one model hardcoded per role, router-ready) + offline `FakeModelClient` for tests/local dev. No real provider calls yet. | ✅ Seam done (Stage 2) |
 | `src/agentic_memory/graph.py` | L4 `MemoryStore` seam over Graphiti: node/edge types from our artifacts (D10), domain writes (`write_requirements`/`write_adr`), and omission + key-fact queries. Offline `InMemoryMemoryStore` fake; real Graphiti backend pending services. | ✅ Seam done (Stage 2) |
+| `src/agentic_memory/agents.py` | `BAAgent` (ticket → `RequirementsArtifact` → memory) and `SAAgent` (memory → `ADR` or clarifications), both over the `ModelClient` + `MemoryStore` seams. | ✅ Done (offline) |
+| `src/agentic_memory/loop.py` | `run_loop` — drives the FSM through `intake → analysis ⇄ clarification → decision (+ escalation)`; the full BA→SA roundtrip, logged and replayable. | ✅ Done (offline) |
 
-`37 passed` — `tests/test_{artifacts,events,fsm,models,graph}.py`. Decisions are logged in [`DECISIONS.md`](DECISIONS.md).
+`43 passed` — `tests/test_{artifacts,events,fsm,models,graph,loop}.py`. Decisions in [`DECISIONS.md`](DECISIONS.md).
+
+> See the loop run end-to-end (prints requirements, FSM path, ADR, omission check):
+> ```bash
+> uv run pytest tests/test_loop.py -s -k happy
+> ```
 
 > The structural omission check already lives in the type system:
 > `ADR.omitted_requirement_ids(artifact)` returns any source requirement that is neither

@@ -243,6 +243,51 @@ class MemoryStore(ABC):
                 )
             )
 
+    def write_clarification(
+        self,
+        *,
+        question: str,
+        requirement_id: str,
+        asker: AgentPersona,
+        round: int,
+        group_id: str = DEFAULT_GROUP,
+    ) -> str:
+        """SA raises a clarification about a requirement. Returns the node id."""
+        clar_id = new_id("clar")
+        self.add_node(
+            GraphNode(
+                id=clar_id, type=NodeType.CLARIFICATION, author=asker,
+                group_id=group_id, attrs={"question": question, "round": round},
+            )
+        )
+        self.add_edge(
+            GraphEdge(
+                type=EdgeType.ASKED_ABOUT, src=clar_id, dst=requirement_id,
+                author=asker, group_id=group_id,
+            )
+        )
+        return clar_id
+
+    def answer_clarification(
+        self,
+        clar_id: str,
+        *,
+        answer: str,
+        requirement_id: str,
+        answerer: AgentPersona,
+        group_id: str = DEFAULT_GROUP,
+    ) -> None:
+        """BA answers a previously-raised clarification."""
+        node = self.get_node(clar_id, group_id=group_id)
+        if node is not None:
+            self.add_node(node.model_copy(update={"attrs": {**node.attrs, "answer": answer}}))
+        self.add_edge(
+            GraphEdge(
+                type=EdgeType.ANSWERED_BY, src=clar_id, dst=requirement_id,
+                author=answerer, group_id=group_id,
+            )
+        )
+
     # -- domain queries (shared) ------------------------------------------
 
     def requirements_for(

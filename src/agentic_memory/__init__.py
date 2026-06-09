@@ -17,7 +17,16 @@ from .artifacts import (
     RequirementTrace,
     new_id,
 )
+from .agents import (
+    Agent,
+    BAAgent,
+    ClarificationRequest,
+    SAAgent,
+    SAResponse,
+    TicketInput,
+)
 from .events import EventLog, EventLogEntry, EventType, StateChange
+from .loop import LoopResult, run_loop
 from .graph import (
     DEFAULT_GROUP,
     EdgeType,
@@ -66,6 +75,15 @@ __all__ = [
     "EventLogEntry",
     "EventType",
     "StateChange",
+    # agents + loop
+    "Agent",
+    "BAAgent",
+    "SAAgent",
+    "ClarificationRequest",
+    "SAResponse",
+    "TicketInput",
+    "LoopResult",
+    "run_loop",
     # graph (L4 shared memory)
     "DEFAULT_GROUP",
     "EdgeType",
