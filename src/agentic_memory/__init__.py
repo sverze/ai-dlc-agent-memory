@@ -18,6 +18,16 @@ from .artifacts import (
     new_id,
 )
 from .events import EventLog, EventLogEntry, EventType, StateChange
+from .models import (
+    DEFAULT_MODEL_BY_ROLE,
+    FakeModelClient,
+    Message,
+    MessageRole,
+    ModelCall,
+    ModelClient,
+    ModelResponse,
+    Usage,
+)
 from .fsm import (
     ALLOWED_TRANSITIONS,
     TERMINAL_STATES,
@@ -47,6 +57,15 @@ __all__ = [
     "EventLogEntry",
     "EventType",
     "StateChange",
+    # models
+    "DEFAULT_MODEL_BY_ROLE",
+    "FakeModelClient",
+    "Message",
+    "MessageRole",
+    "ModelCall",
+    "ModelClient",
+    "ModelResponse",
+    "Usage",
     # fsm
     "ALLOWED_TRANSITIONS",
     "TERMINAL_STATES",
