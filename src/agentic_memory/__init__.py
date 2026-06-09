@@ -18,6 +18,15 @@ from .artifacts import (
     new_id,
 )
 from .events import EventLog, EventLogEntry, EventType, StateChange
+from .graph import (
+    DEFAULT_GROUP,
+    EdgeType,
+    GraphEdge,
+    GraphNode,
+    InMemoryMemoryStore,
+    MemoryStore,
+    NodeType,
+)
 from .models import (
     DEFAULT_MODEL_BY_ROLE,
     FakeModelClient,
@@ -57,6 +66,14 @@ __all__ = [
     "EventLogEntry",
     "EventType",
     "StateChange",
+    # graph (L4 shared memory)
+    "DEFAULT_GROUP",
+    "EdgeType",
+    "GraphEdge",
+    "GraphNode",
+    "InMemoryMemoryStore",
+    "MemoryStore",
+    "NodeType",
     # models
     "DEFAULT_MODEL_BY_ROLE",
     "FakeModelClient",

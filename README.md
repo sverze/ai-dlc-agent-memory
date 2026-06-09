@@ -49,8 +49,9 @@ No agents, no Graphiti, no LLM calls yet.
 | `src/agentic_memory/events.py` | Append-only JSONL `EventLog` with monotonic sequence numbers + `replay()` reducer | ✅ Done |
 | `src/agentic_memory/fsm.py` | `FSM` orchestrator: `intake → analysis ⇄ clarification → decision (+ escalation)`, whitelist transitions, clarify-round cap with forced escalation, `replay_final_state()` | ✅ Done |
 | `src/agentic_memory/models.py` | `ModelClient` seam (one model hardcoded per role, router-ready) + offline `FakeModelClient` for tests/local dev. No real provider calls yet. | ✅ Seam done (Stage 2) |
+| `src/agentic_memory/graph.py` | L4 `MemoryStore` seam over Graphiti: node/edge types from our artifacts (D10), domain writes (`write_requirements`/`write_adr`), and omission + key-fact queries. Offline `InMemoryMemoryStore` fake; real Graphiti backend pending services. | ✅ Seam done (Stage 2) |
 
-`27 passed` — `tests/test_{artifacts,events,fsm,models}.py`. Decisions are logged in [`DECISIONS.md`](DECISIONS.md).
+`37 passed` — `tests/test_{artifacts,events,fsm,models,graph}.py`. Decisions are logged in [`DECISIONS.md`](DECISIONS.md).
 
 > The structural omission check already lives in the type system:
 > `ADR.omitted_requirement_ids(artifact)` returns any source requirement that is neither

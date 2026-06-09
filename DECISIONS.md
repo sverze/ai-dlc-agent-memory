@@ -115,11 +115,30 @@ is a production concern. (Spec Q5; PRD NFR2.)
 
 ---
 
-## Open decisions (not yet settled — needed to start Stage 2)
+## D10 — Graphiti entity/edge model: structured-first ✅ (resolves OD1)
 
-- **OD1 — Graphiti entity/edge model.** Exact node and relationship shapes for requirements
-  and ADRs in the temporal graph. **This is the Stage-2 entry blocker.** (PRD §15 Q2.)
-- **OD2 — Graph backend.** Neo4j Community (spec default) vs. FalkorDB / Kuzu (lighter free
-  alternatives). Default to Neo4j unless local footprint is a concern.
+**Decision.** Graph facts that originate in a typed artifact are written **deterministically
+from the Pydantic objects** — no LLM extraction in the loop. Graphiti's LLM extraction is
+reserved for free-text we don't pre-structure (raw ticket prose, clarification answers).
+Node types: `Ticket`, `Requirement`, `AcceptanceCriterion`, `KeyFact`, `Clarification`,
+`ADR`, `AddedConstraint`. Edges: `DERIVED_FROM`, `VALIDATES`, `STATED_IN`, `ASKED_ABOUT`,
+`ANSWERED_BY`, `ADDRESSES`, `DEFERS`, `ADDS`, `SUPERSEDES`. The `ADDRESSES`/`DEFERS` edges
+are the graph projection of `RequirementTrace`, so omission and memory-hit-rate are graph
+queries, not bespoke bookkeeping.
+
+**Why.** Determinism is load-bearing (D2 / NFR1). Extraction over already-structured data
+adds non-determinism for no gain and would conflate extraction misses with retrieval misses
+in the metrics. (Full proposal: `Plans/graphiti-entity-edge-model.md`, OC1.)
+
+**Resolved sub-choices:** OC2 → **Kuzu (embedded) for local dev, Neo4j for shared/demo**.
+OC3 → **one graph namespace (`group_id`) per run** for V1; cross-run memory is a V2 episodic
+concern. OC4 → **key facts are nodes** (directly queryable for the ≥90% hit-rate metric).
+
+---
+
+## Open decisions
+
+- **OD2 — Graph backend** — *partially resolved by D10/OC2* (Kuzu local, Neo4j shared);
+  confirm once `graphiti-core` backend support is verified against the real library.
 - **OD3 — Architect verdict capture.** Langfuse annotations vs. a separate review sheet
   feeding the eval log. (PRD §15 Q4 — resolve at Stage 3.)
