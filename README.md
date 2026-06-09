@@ -38,10 +38,28 @@ are *advisory* and always measured against the human verdict — never used to o
   not vibes).
 - **Honest measurement.** Human gate is primary; all rates reported with 95% CIs.
 
-## Current status — Stage 1 (substrate) complete
+## Development status
 
-What's built and tested today is the **deterministic substrate** the agent loop will run on.
-No agents, no Graphiti, no LLM calls yet.
+> **Handoff checkpoint (2026-06-09).** The full BA→SA hypothesis loop runs **end-to-end and
+> is deterministically tested with zero external services** — every boundary (model, memory)
+> has a fake behind a stable interface. What remains for a *live* run is swapping those fakes
+> for real adapters (provider SDKs, a Graphiti backend, the JIRA tool, OTel). See
+> [Continuing this work](#continuing-this-work-handoff).
+
+| Stage | Scope | State |
+|-------|-------|-------|
+| **1 — Substrate** | typed artifacts, append-only event log, deterministic FSM | ✅ **Complete** |
+| **2 — Core loop** | BA/SA agents, L4 memory, FSM negotiation, model seam | 🟡 **Logic complete (offline); real adapters pending** |
+| 3 — Make it visible, then judge it ← **HYPOTHESIS GATE** | OTel→Langfuse, frozen scenarios, architect verdict, advisory eval + κ | ⬜ Not started |
+| 4 — Breadth | Confluence / Notion / Miro ingestion | ⬜ Not started |
+| 5 — Properties & robustness | conflict resolution, replay verification, V2 stubs, demo | ⬜ Not started |
+
+**What "offline" means for Stage 2:** the agent logic, the memory model, and the negotiation
+loop are real and fully exercised; the model client and graph store are fakes. The interfaces
+(`ModelClient`, `MemoryStore`) are the integration seams — dropping in real implementations
+behind them requires no change to agent or loop code.
+
+### Modules
 
 | Module | What it provides | Status |
 |--------|------------------|--------|
@@ -94,12 +112,18 @@ assert replay_final_state(log) is fsm.state   # the log replays to identical sta
 
 ```
 .
-├── src/agentic_memory/      # the package (substrate)
+├── src/agentic_memory/      # the package
 │   ├── artifacts.py         # typed hand-offs (Pydantic v2)
 │   ├── events.py            # append-only event log + replay
-│   └── fsm.py               # deterministic orchestrator
-├── tests/                   # pytest suite (16 tests)
-├── Plans/                   # build planning (empty placeholder)
+│   ├── fsm.py               # deterministic orchestrator
+│   ├── models.py            # ModelClient seam + FakeModelClient  ← swap point (real LLMs)
+│   ├── graph.py             # MemoryStore seam + InMemoryMemoryStore  ← swap point (Graphiti)
+│   ├── agents.py            # BAAgent / SAAgent
+│   └── loop.py              # run_loop — the FSM-driven roundtrip
+├── tests/                   # pytest suite (43 tests)
+├── Plans/                   # design proposals (e.g. graphiti-entity-edge-model.md → D10)
+├── DECISIONS.md             # durable decision log (D1–D11) — read this first
+├── .env.example             # setup template (spec Appendix A.2)
 ├── pyproject.toml           # uv project; pytest config
 ├── uv.lock                  # pinned deps (committed — NFR6 reproducibility)
 └── 2026-06-08-collective-agentic-memory-*.md   # PRD, spec, research
@@ -131,10 +155,36 @@ Python-first, because the memory/agent/eval ecosystem is Python-native.
 **Deferred to V2:** persona memory (Mem0), episodic memory (Zep/Hindsight), skill registry,
 LiteLLM routing, more personas (Security/QA/Ops), second-tier tools, Figma.
 
+## Continuing this work (handoff)
+
+The architecture is **fakes behind interfaces** (decision D11): every external boundary has a
+deterministic fake so the loop is testable offline, and going live means implementing the same
+interface with a real backend. The remaining Stage-2 work is exactly those swaps — none require
+touching `agents.py` or `loop.py`:
+
+1. **Real model clients** — implement `ModelClient` (see `models.py`) with `anthropic` and
+   `google-genai`. The wire contract agents expect: BA returns `RequirementsArtifact` JSON; SA
+   returns `SAResponse` JSON (clarify or decide). Add the SDKs to `pyproject.toml`; keys are in
+   `.env.example`. *Validate by reusing the `test_loop.py` scenarios against the real client.*
+2. **Real graph store** — implement `MemoryStore` (see `graph.py`) as `GraphitiMemoryStore`
+   over `graphiti-core`. Backend: Kuzu (embedded) for local dev, Neo4j for shared/demo (D10/OC2).
+   Add a `docker-compose.yml`. The node/edge model is settled in `Plans/graphiti-entity-edge-model.md`.
+3. **JIRA `ToolAdapter`** — direct API (`httpx`) → `TicketInput`. This is the only tool needed
+   to reach the hypothesis gate (D6).
+4. **OTel → Langfuse** — instrument each `ModelClient.complete` call; the `Usage` field on
+   `ModelResponse` is already there to feed token metrics (FR10).
+
+Then Stage 3 (the gate): a frozen, externally-authored scenario set + a senior architect's
+accept/revise/reject verdict (D7). **Open decision OD3** — where the architect records verdicts —
+must be resolved here. Build nothing below the gate until acceptance ≥70% / reject <10% holds.
+
+**Start here:** read `DECISIONS.md` (D1–D11), then run `uv run pytest tests/test_loop.py -s -k happy`
+to watch the loop, then pick up integration step #1 or #2.
+
 ## Roadmap (build in dependency order, no calendar)
 
 1. **Stage 1 — substrate** ✅ artifacts, event log, FSM
-2. **Stage 2 — the core loop**: Graphiti+Neo4j, BA agent (JIRA→artifact→graph), SA agent (graph→ADR), wire the FSM negotiation loop, `ModelClient` per role
+2. **Stage 2 — the core loop** 🟡 BA/SA agents + FSM negotiation + model/memory seams done **offline**; real model clients, Graphiti backend, JIRA adapter, and OTel pending (see [Continuing this work](#continuing-this-work-handoff))
 3. **Stage 3 — make it visible, then judge it** ← **HYPOTHESIS GATE**: OTel→Langfuse, example tickets, architect verdict, advisory eval + κ. *If it fails here, fix retrieval/prompts before building anything below.*
 4. **Stage 4 — breadth**: Confluence / Notion / Miro ingestion
 5. **Stage 5 — properties & robustness**: conflict resolution, replay verification, V2 interface stubs, honest demo

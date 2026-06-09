@@ -136,6 +136,41 @@ concern. OC4 → **key facts are nodes** (directly queryable for the ≥90% hit-
 
 ---
 
+## D11 — Offline-first: a fake behind every external boundary ✅
+
+**Decision.** Every external dependency (LLM provider, graph backend, and later the JIRA tool)
+is reached through an **interface with a deterministic in-process fake**: `ModelClient` /
+`FakeModelClient`, `MemoryStore` / `InMemoryMemoryStore`. Agent and loop code depend only on
+the interfaces. Going live = implementing the same interface with a real backend; no caller
+changes.
+
+**Why.** It lets the entire core-hypothesis loop be built and **fully tested with zero services
+and zero API spend**, keeps tests deterministic (NFR1), and makes the integration points
+explicit and swappable (NFR5). The whole BA→SA roundtrip is exercised in `test_loop.py` this way.
+
+**How to apply.** New external dependency → define its interface + a fake **first**, write the
+logic against the interface, then add the real implementation as a separate class. Reuse the
+existing offline tests to validate the real implementation.
+
+---
+
+## D12 — Agent / loop contract ✅
+
+**Decision.** Separation of responsibility in the loop:
+- **Agents** (`BAAgent`, `SAAgent`) build prompts, call their bound model, parse the typed
+  response, and own **their** writes to shared memory.
+- **`run_loop`** drives the FSM: it reads state, lets the agent act, and submits a
+  `TransitionProposal`; the **FSM alone** executes/rejects/forces transitions (consistent with D2).
+- **Model wire contract:** the BA model returns `RequirementsArtifact` JSON; the SA model returns
+  `SAResponse` JSON — either `clarifications[]` (→ negotiation) or a full `ADR` (→ decision).
+  This contract is the integration point for real provider clients.
+
+**Why.** Keeps the deterministic executor (FSM) separate from non-deterministic actors (agents),
+and fixes a stable, typed boundary so real LLM clients are a drop-in. (Implemented in
+`agents.py` / `loop.py`.)
+
+---
+
 ## Open decisions
 
 - **OD2 — Graph backend** — *partially resolved by D10/OC2* (Kuzu local, Neo4j shared);

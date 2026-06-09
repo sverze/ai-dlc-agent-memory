@@ -6,6 +6,13 @@
 **Source:** Council debate (5 agents — Distributed Systems Architect, Principal Engineer, Security/Compliance Architect, Product Engineer, Knowledge Systems Researcher), revised per independent review council (scope-cutter, memory-research scientist, delivery lead, contrarian, LLMOps engineer)
 **Destination:** Prosperity / AI DLC prototype
 
+> ⚠️ **Superseded language (noted 2026-06-09).** This spec predates the confirmed **Python-first**
+> decision (PRD §9, DECISIONS.md **D1**) and still says "Scaffold TS project (bun)" (Build
+> Sequence) and lists TypeScript/bun in the Technology Stack Summary. **The PRD and the code are
+> authoritative — the implementation is Python (uv/Pydantic/pytest).** Read the language/runtime
+> references here as historical. Everything else (architecture, FSM, memory model, gate, metrics)
+> stands and has been implemented as specified.
+
 ---
 
 ## Revision Note (v1.1 — Independent Review Response)

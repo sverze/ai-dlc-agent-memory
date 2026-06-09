@@ -1,8 +1,10 @@
 # Proposal — Graphiti entity/edge model (resolves OD1)
 
-**Status:** Draft for review — not yet a decision. This is the Stage-2 entry blocker
-(PRD §15 Q2, DECISIONS.md OD1). Once you sign off, it becomes a decision (D10) and the
-graph-write code can be built against it.
+**Status: ✅ ACCEPTED (2026-06-09) → DECISIONS.md D10.** OC1 = structured-first, OC2 = Kuzu
+local / Neo4j shared, OC3 = per-run namespace, OC4 = key facts as nodes. The node/edge model is
+implemented in `src/agentic_memory/graph.py` and exercised by `tests/test_graph.py`; this
+document is retained as the design rationale. A real `GraphitiMemoryStore` against `graphiti-core`
+is the remaining build step (see README → Continuing this work).
 
 > Confidence note: the *domain* model below is grounded in our own artifacts
 > (`artifacts.py`) and is high-confidence. The exact Graphiti API surface (custom
