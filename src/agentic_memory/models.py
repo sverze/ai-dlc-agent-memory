@@ -7,15 +7,20 @@ never changes (decision D8 / FR12).
 
 ``FakeModelClient`` is the offline, deterministic implementation used by tests and
 local development — no network, no keys, fully scriptable, and it records every
-call for assertions. Real provider clients (anthropic, google-genai) land in
-Stage 2 once keys and the agent code exist.
+call for assertions. The real provider clients (``AnthropicModelClient``,
+``GeminiModelClient``) live alongside it and import their SDKs lazily, so importing
+this module never requires the provider packages — the offline path stays intact
+with nothing installed. ``make_model_client`` wires the two into a single
+persona-routing client that drops in wherever ``FakeModelClient`` was used.
 """
 
 from __future__ import annotations
 
+import os
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Sequence
 from enum import StrEnum
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -183,3 +188,236 @@ def _estimate_usage(
 
 def _tok(text: str) -> int:
     return len(text.split())
+
+
+def _strip_code_fence(text: str) -> str:
+    """Unwrap a whole-response markdown code fence if present.
+
+    Real models routinely wrap JSON in ```json … ``` even when asked for raw JSON.
+    The seam carries no per-call format hint and the agents parse the returned text
+    directly (``model_validate_json``), so the *client* normalizes this provider
+    quirk into clean text — the right layer, leaving agents.py untouched. Only a
+    fence enclosing the entire (stripped) response is removed; inline fences within
+    prose are left alone. Provider-native JSON mode is deferred to v2, where a
+    format hint on the seam lets each call opt in per turn (BA intake is JSON but
+    BA clarification answers are free text, so it cannot be set blanket-on here).
+    """
+    s = text.strip()
+    if not s.startswith("```"):
+        return text
+    lines = s.splitlines()
+    if len(lines) >= 2 and lines[-1].strip() == "```":
+        return "\n".join(lines[1:-1]).strip()
+    return text
+
+
+# --- Real provider clients -------------------------------------------------
+#
+# Both import their SDK *lazily* (inside __init__/complete), never at module top,
+# so this module imports cleanly with nothing installed and the offline path is
+# never coupled to the provider packages. Keys come from the environment and are
+# never logged, stored, or placed in a ModelCall.
+
+DEFAULT_MAX_TOKENS = 4096
+
+
+class AnthropicModelClient(ModelClient):
+    """Real ``ModelClient`` for Claude (the Solution Architect's bound model).
+
+    Maps the seam's ``Message`` list to anthropic's messages array (system passed
+    out-of-band via the ``system`` kwarg) and reports provider-supplied token usage.
+    """
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        client: object | None = None,
+        model_by_role: dict[AgentPersona, str] | None = None,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+    ) -> None:
+        super().__init__(model_by_role)
+        self.max_tokens = max_tokens
+        self._client: Any
+        if client is not None:
+            self._client = client
+        else:
+            key = api_key or os.getenv("ANTHROPIC_API_KEY")
+            if not key:
+                raise RuntimeError(
+                    "ANTHROPIC_API_KEY not set — export it or pass api_key= "
+                    "to AnthropicModelClient."
+                )
+            import anthropic  # lazy: offline import must not require the SDK
+
+            self._client = anthropic.Anthropic(api_key=key)
+
+    def complete(
+        self,
+        messages: Sequence[Message],
+        *,
+        persona: AgentPersona,
+        system: str | None = None,
+        temperature: float = 0.0,
+    ) -> ModelResponse:
+        model = self.model_for(persona)
+        wire = [
+            {"role": _ANTHROPIC_ROLE[m.role], "content": m.content}
+            for m in messages
+            if m.role is not MessageRole.SYSTEM
+        ]
+        kwargs: dict[str, object] = {
+            "model": model,
+            "max_tokens": self.max_tokens,
+            "messages": wire,
+            "temperature": temperature,
+        }
+        if system:
+            kwargs["system"] = system
+
+        resp = self._client.messages.create(**kwargs)
+
+        text = _strip_code_fence(
+            "".join(
+                block.text
+                for block in resp.content
+                if getattr(block, "type", None) == "text"
+            )
+        )
+        usage = Usage(
+            input_tokens=getattr(resp.usage, "input_tokens", 0) or 0,
+            output_tokens=getattr(resp.usage, "output_tokens", 0) or 0,
+        )
+        return ModelResponse(text=text, model=model, persona=persona, usage=usage)
+
+
+class GeminiModelClient(ModelClient):
+    """Real ``ModelClient`` for Gemini (the Business Analyst's bound model).
+
+    Uses the unified ``google-genai`` SDK. The system prompt rides the config's
+    ``system_instruction`` slot; ``ASSISTANT`` turns map to Gemini's ``model`` role.
+    """
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        client: object | None = None,
+        model_by_role: dict[AgentPersona, str] | None = None,
+    ) -> None:
+        super().__init__(model_by_role)
+        self._client: Any
+        if client is not None:
+            self._client = client
+        else:
+            key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+            if not key:
+                raise RuntimeError(
+                    "GEMINI_API_KEY (or GOOGLE_API_KEY) not set — export it or pass "
+                    "api_key= to GeminiModelClient."
+                )
+            from google import genai  # lazy: offline import must not require the SDK
+
+            self._client = genai.Client(api_key=key)
+
+    def complete(
+        self,
+        messages: Sequence[Message],
+        *,
+        persona: AgentPersona,
+        system: str | None = None,
+        temperature: float = 0.0,
+    ) -> ModelResponse:
+        from google.genai import types  # lazy
+
+        model = self.model_for(persona)
+        contents = [
+            types.Content(
+                role=_GEMINI_ROLE[m.role],
+                parts=[types.Part(text=m.content)],
+            )
+            for m in messages
+            if m.role is not MessageRole.SYSTEM
+        ]
+        config = types.GenerateContentConfig(
+            system_instruction=system or None,
+            temperature=temperature,
+        )
+        resp = self._client.models.generate_content(
+            model=model, contents=contents, config=config
+        )
+
+        meta = getattr(resp, "usage_metadata", None)
+        usage = Usage(
+            input_tokens=getattr(meta, "prompt_token_count", 0) or 0,
+            output_tokens=getattr(meta, "candidates_token_count", 0) or 0,
+        )
+        return ModelResponse(
+            text=_strip_code_fence(resp.text or ""),
+            model=model,
+            persona=persona,
+            usage=usage,
+        )
+
+
+# Seam role (MessageRole) → provider wire role.
+_ANTHROPIC_ROLE: dict[MessageRole, str] = {
+    MessageRole.USER: "user",
+    MessageRole.ASSISTANT: "assistant",
+}
+_GEMINI_ROLE: dict[MessageRole, str] = {
+    MessageRole.USER: "user",
+    MessageRole.ASSISTANT: "model",
+}
+
+
+class RoutingModelClient(ModelClient):
+    """Routes each persona to its own real client — the drop-in for ``FakeModelClient``.
+
+    v1 keeps one model hardcoded per role (D8); this routes the *client* per role too,
+    so the BA's calls hit Gemini and the SA's hit Claude through a single object that
+    agents and ``run_loop`` use exactly like the fake.
+    """
+
+    def __init__(self, by_persona: dict[AgentPersona, ModelClient]) -> None:
+        # Inherit a model map for model_for() introspection; routing is by persona.
+        super().__init__()
+        self._by_persona = dict(by_persona)
+
+    def _client_for(self, persona: AgentPersona) -> ModelClient:
+        try:
+            return self._by_persona[persona]
+        except KeyError:
+            raise ValueError(f"no client routed for role {persona}") from None
+
+    def model_for(self, persona: AgentPersona) -> str:
+        return self._client_for(persona).model_for(persona)
+
+    def complete(
+        self,
+        messages: Sequence[Message],
+        *,
+        persona: AgentPersona,
+        system: str | None = None,
+        temperature: float = 0.0,
+    ) -> ModelResponse:
+        return self._client_for(persona).complete(
+            messages, persona=persona, system=system, temperature=temperature
+        )
+
+
+def make_model_client(
+    *, anthropic_key: str | None = None, gemini_key: str | None = None
+) -> ModelClient:
+    """Build the real persona-routing client: BA → Gemini, SA → Anthropic.
+
+    Reads keys from the environment unless passed explicitly. Raises a clear
+    ``RuntimeError`` (via the sub-clients) if a required key is missing — the
+    drop-in replacement for ``FakeModelClient()`` in a real run.
+    """
+    return RoutingModelClient(
+        {
+            AgentPersona.BUSINESS_ANALYST: GeminiModelClient(api_key=gemini_key),
+            AgentPersona.SOLUTION_ARCHITECT: AnthropicModelClient(api_key=anthropic_key),
+        }
+    )

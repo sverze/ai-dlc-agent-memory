@@ -38,13 +38,17 @@ from .graph import (
 )
 from .models import (
     DEFAULT_MODEL_BY_ROLE,
+    AnthropicModelClient,
     FakeModelClient,
+    GeminiModelClient,
     Message,
     MessageRole,
     ModelCall,
     ModelClient,
     ModelResponse,
+    RoutingModelClient,
     Usage,
+    make_model_client,
 )
 from .fsm import (
     ALLOWED_TRANSITIONS,
@@ -94,13 +98,17 @@ __all__ = [
     "NodeType",
     # models
     "DEFAULT_MODEL_BY_ROLE",
+    "AnthropicModelClient",
     "FakeModelClient",
+    "GeminiModelClient",
     "Message",
     "MessageRole",
     "ModelCall",
     "ModelClient",
     "ModelResponse",
+    "RoutingModelClient",
     "Usage",
+    "make_model_client",
     # fsm
     "ALLOWED_TRANSITIONS",
     "TERMINAL_STATES",

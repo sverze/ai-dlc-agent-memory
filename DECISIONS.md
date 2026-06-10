@@ -171,9 +171,49 @@ and fixes a stable, typed boundary so real LLM clients are a drop-in. (Implement
 
 ---
 
+## D13 — Real `ModelClient` clients implemented; seam proven, terminal loop deferred ✅ (integration swap #1)
+
+**Decision.** Implemented the real provider clients behind the `ModelClient` seam (D8/D11):
+`AnthropicModelClient` (SA → `claude-sonnet-4-6`), `GeminiModelClient` (BA →
+`gemini-2.5-flash`, via the unified `google-genai` SDK), and a `RoutingModelClient` +
+`make_model_client()` factory that is a drop-in for `FakeModelClient`. SDKs live in an
+**optional `live` extra** (`uv sync --extra live`), imported **lazily** so the offline path
+(43-test suite) needs nothing installed. Keys come from env only; never logged. The seam is
+**proven by gated live smoke tests** — one real call per provider asserting non-empty text,
+correct model id, and real (non-zero) token usage. `agents.py` / `loop.py` kept at **zero diff**.
+
+**The two-layer finding (why the *full* loop isn't green yet).** Running the real `run_loop`
+end-to-end surfaced two distinct gaps the `FakeModelClient` had masked:
+1. **Markdown fences** — real models wrap JSON in ```` ```json … ``` ````. **Fixed** in the
+   client (`_strip_code_fence`, applied to both providers) — the right layer, since the seam
+   carries no per-call format hint and the BA makes mixed JSON/free-text calls.
+2. **Schema non-conformance** — real Gemini emits JSON that doesn't match `RequirementsArtifact`
+   (omits required `source_ticket_id` / `title` / `summary`; `priority="Unspecified"` vs the
+   `must/should/could/wont` enum), because `BA_SYSTEM` *names* the schema without *including* it.
+   This needs the schema **in the prompt** (agents.py) or `response_schema`/tool-use threaded
+   through the seam — **both touch surfaces frozen for this swap.**
+
+**Why ship now (vs. expanding scope).** Swap #1's deliverable is the **client seam**, and that
+is proven. Layer 2 is a genuine `ISC-24 (loop works)` vs `ISC-27 (agents.py frozen)` contradiction
+that is **not the model-client's concern** — it is agent-prompt / structured-output work. Bundling
+it would dilute a clean, surgical swap and silently change a stated anti-criterion. So the full
+real-model terminal loop becomes the **explicit next increment** ("swap #1.5 — real-model
+structured output"); the live loop test (`test_live_loop_reaches_terminal`) is marked `xfail`
+documenting the target. (Decision made by the principal after advisor escalation of the contradiction.)
+
+**Gotcha.** Run live tests with `uv run --extra live python -m pytest -m live` — the bare `pytest`
+console script resolves to an interpreter without the `live` extra and the SDK imports fail.
+
+---
+
 ## Open decisions
 
 - **OD2 — Graph backend** — *partially resolved by D10/OC2* (Kuzu local, Neo4j shared);
   confirm once `graphiti-core` backend support is verified against the real library.
 - **OD3 — Architect verdict capture.** Langfuse annotations vs. a separate review sheet
   feeding the eval log. (PRD §15 Q4 — resolve at Stage 3.)
+- **OD4 — Real-model structured output (swap #1.5).** How to make real models emit
+  schema-conformant artifacts: (a) inject the Pydantic JSON schema into `BA_SYSTEM`/`SA_SYSTEM`
+  (prompt-only, smallest change, touches `agents.py`); (b) Gemini `response_schema` + Anthropic
+  tool-use threaded through an extended `complete()` seam (cleanest, changes the ABC); (c) hybrid.
+  Resolve before the Stage-3 gate — extraction fidelity is exactly what the gate measures (D7).

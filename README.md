@@ -40,16 +40,18 @@ are *advisory* and always measured against the human verdict — never used to o
 
 ## Development status
 
-> **Handoff checkpoint (2026-06-09).** The full BA→SA hypothesis loop runs **end-to-end and
-> is deterministically tested with zero external services** — every boundary (model, memory)
-> has a fake behind a stable interface. What remains for a *live* run is swapping those fakes
-> for real adapters (provider SDKs, a Graphiti backend, the JIRA tool, OTel). See
-> [Continuing this work](#continuing-this-work-handoff).
+> **Checkpoint (2026-06-10) — integration swap #1 done.** The full BA→SA hypothesis loop runs
+> **end-to-end and is deterministically tested with zero external services** — every boundary
+> (model, memory) has a fake behind a stable interface. **The real `ModelClient` is now
+> implemented** (Anthropic + Gemini) and the **seam is proven by live smoke tests** (real text +
+> real token usage, both providers). Remaining for a *live loop* run: real-model **structured
+> output** (swap #1.5, see [Continuing this work](#continuing-this-work-handoff)), then a Graphiti
+> backend, the JIRA tool, and OTel.
 
 | Stage | Scope | State |
 |-------|-------|-------|
 | **1 — Substrate** | typed artifacts, append-only event log, deterministic FSM | ✅ **Complete** |
-| **2 — Core loop** | BA/SA agents, L4 memory, FSM negotiation, model seam | 🟡 **Logic complete (offline); real adapters pending** |
+| **2 — Core loop** | BA/SA agents, L4 memory, FSM negotiation, model seam | 🟡 **Offline complete; real ModelClient done (seam proven); real-loop structured output + Graphiti/JIRA/OTel pending** |
 | 3 — Make it visible, then judge it ← **HYPOTHESIS GATE** | OTel→Langfuse, frozen scenarios, architect verdict, advisory eval + κ | ⬜ Not started |
 | 4 — Breadth | Confluence / Notion / Miro ingestion | ⬜ Not started |
 | 5 — Properties & robustness | conflict resolution, replay verification, V2 stubs, demo | ⬜ Not started |
@@ -66,12 +68,14 @@ behind them requires no change to agent or loop code.
 | `src/agentic_memory/artifacts.py` | Typed data contracts: `RequirementsArtifact`, `ADR` (with `RequirementTrace` / `AddedConstraint` encoding the eval rubric), `KnowledgeEntry` write envelope | ✅ Done |
 | `src/agentic_memory/events.py` | Append-only JSONL `EventLog` with monotonic sequence numbers + `replay()` reducer | ✅ Done |
 | `src/agentic_memory/fsm.py` | `FSM` orchestrator: `intake → analysis ⇄ clarification → decision (+ escalation)`, whitelist transitions, clarify-round cap with forced escalation, `replay_final_state()` | ✅ Done |
-| `src/agentic_memory/models.py` | `ModelClient` seam (one model hardcoded per role, router-ready) + offline `FakeModelClient` for tests/local dev. No real provider calls yet. | ✅ Seam done (Stage 2) |
+| `src/agentic_memory/models.py` | `ModelClient` seam + offline `FakeModelClient` + **real `AnthropicModelClient` / `GeminiModelClient`** (lazy SDK imports, env keys, fence-normalized) and `make_model_client()` routing factory. Live smoke tests prove real calls + token usage. | ✅ Seam + real clients done; live loop pending structured output (OD4) |
 | `src/agentic_memory/graph.py` | L4 `MemoryStore` seam over Graphiti: node/edge types from our artifacts (D10), domain writes (`write_requirements`/`write_adr`), and omission + key-fact queries. Offline `InMemoryMemoryStore` fake; real Graphiti backend pending services. | ✅ Seam done (Stage 2) |
 | `src/agentic_memory/agents.py` | `BAAgent` (ticket → `RequirementsArtifact` → memory) and `SAAgent` (memory → `ADR` or clarifications), both over the `ModelClient` + `MemoryStore` seams. | ✅ Done (offline) |
 | `src/agentic_memory/loop.py` | `run_loop` — drives the FSM through `intake → analysis ⇄ clarification → decision (+ escalation)`; the full BA→SA roundtrip, logged and replayable. | ✅ Done (offline) |
 
-`43 passed` — `tests/test_{artifacts,events,fsm,models,graph,loop}.py`. Decisions in [`DECISIONS.md`](DECISIONS.md).
+`43 passed` offline — `tests/test_{artifacts,events,fsm,models,graph,loop}.py`. Plus
+`tests/test_live_models.py` (gated, opt-in): 2 live smoke tests (real Anthropic + Gemini calls)
+and 1 `xfail` end-to-end loop test (the swap-#1.5 target). Decisions in [`DECISIONS.md`](DECISIONS.md).
 
 > See the loop run end-to-end (prints requirements, FSM path, ADR, omission check):
 > ```bash
@@ -90,8 +94,17 @@ Requires **Python 3.12+** and [**uv**](https://docs.astral.sh/uv/).
 # install deps (creates .venv from the committed uv.lock)
 uv sync
 
-# run the tests
+# run the offline tests (no keys, no network, no spend)
 uv run pytest
+```
+
+To exercise the **real** model clients you need the `live` extra and provider keys
+(`ANTHROPIC_API_KEY`, `GEMINI_API_KEY` — see `.env.example`):
+
+```bash
+uv sync --extra live
+# NOTE: use `python -m pytest`, not bare `pytest` — the console script misses the extra.
+uv run --extra live python -m pytest -m live -v   # makes real API calls (costs money)
 ```
 
 ```python
@@ -116,13 +129,13 @@ assert replay_final_state(log) is fsm.state   # the log replays to identical sta
 │   ├── artifacts.py         # typed hand-offs (Pydantic v2)
 │   ├── events.py            # append-only event log + replay
 │   ├── fsm.py               # deterministic orchestrator
-│   ├── models.py            # ModelClient seam + FakeModelClient  ← swap point (real LLMs)
+│   ├── models.py            # ModelClient seam + FakeModelClient + real Anthropic/Gemini clients ✅
 │   ├── graph.py             # MemoryStore seam + InMemoryMemoryStore  ← swap point (Graphiti)
 │   ├── agents.py            # BAAgent / SAAgent
 │   └── loop.py              # run_loop — the FSM-driven roundtrip
-├── tests/                   # pytest suite (43 tests)
+├── tests/                   # pytest suite (43 offline + 3 gated live)
 ├── Plans/                   # design proposals (e.g. graphiti-entity-edge-model.md → D10)
-├── DECISIONS.md             # durable decision log (D1–D11) — read this first
+├── DECISIONS.md             # durable decision log (D1–D13) — read this first
 ├── .env.example             # setup template (spec Appendix A.2)
 ├── pyproject.toml           # uv project; pytest config
 ├── uv.lock                  # pinned deps (committed — NFR6 reproducibility)
@@ -162,10 +175,16 @@ deterministic fake so the loop is testable offline, and going live means impleme
 interface with a real backend. The remaining Stage-2 work is exactly those swaps — none require
 touching `agents.py` or `loop.py`:
 
-1. **Real model clients** — implement `ModelClient` (see `models.py`) with `anthropic` and
-   `google-genai`. The wire contract agents expect: BA returns `RequirementsArtifact` JSON; SA
-   returns `SAResponse` JSON (clarify or decide). Add the SDKs to `pyproject.toml`; keys are in
-   `.env.example`. *Validate by reusing the `test_loop.py` scenarios against the real client.*
+1. **Real model clients** — ✅ **Done (swap #1).** `AnthropicModelClient` / `GeminiModelClient` /
+   `make_model_client()` in `models.py`, behind the `live` extra; seam proven by the live smoke
+   tests. Swap `FakeModelClient()` → `make_model_client()` and the same `run_loop` drives real models.
+1.5. **Real-model structured output** ← **DO THIS NEXT (OD4).** The seam works, but real models
+   don't yet emit schema-conformant artifacts: they wrap JSON in markdown fences (already fixed in
+   the client) *and* omit required `RequirementsArtifact` fields / use out-of-enum `priority`
+   values, because `BA_SYSTEM` names the schema without including it. Fix by injecting the Pydantic
+   schema into `BA_SYSTEM`/`SA_SYSTEM` (prompt-only) and/or threading `response_schema` (Gemini) /
+   tool-use (Anthropic) through the seam. The `xfail` `test_live_loop_reaches_terminal` is the
+   target to turn green. *This is the gate to the live loop running end-to-end.*
 2. **Real graph store** — implement `MemoryStore` (see `graph.py`) as `GraphitiMemoryStore`
    over `graphiti-core`. Backend: Kuzu (embedded) for local dev, Neo4j for shared/demo (D10/OC2).
    Add a `docker-compose.yml`. The node/edge model is settled in `Plans/graphiti-entity-edge-model.md`.
@@ -178,13 +197,14 @@ Then Stage 3 (the gate): a frozen, externally-authored scenario set + a senior a
 accept/revise/reject verdict (D7). **Open decision OD3** — where the architect records verdicts —
 must be resolved here. Build nothing below the gate until acceptance ≥70% / reject <10% holds.
 
-**Start here:** read `DECISIONS.md` (D1–D11), then run `uv run pytest tests/test_loop.py -s -k happy`
-to watch the loop, then pick up integration step #1 or #2.
+**Start here:** read `DECISIONS.md` (D1–D13, esp. D13 + OD4), then run
+`uv run pytest tests/test_loop.py -s -k happy` to watch the loop, then pick up integration
+step **1.5** (real-model structured output) — the gate to the live loop running end-to-end.
 
 ## Roadmap (build in dependency order, no calendar)
 
 1. **Stage 1 — substrate** ✅ artifacts, event log, FSM
-2. **Stage 2 — the core loop** 🟡 BA/SA agents + FSM negotiation + model/memory seams done **offline**; real model clients, Graphiti backend, JIRA adapter, and OTel pending (see [Continuing this work](#continuing-this-work-handoff))
+2. **Stage 2 — the core loop** 🟡 BA/SA agents + FSM negotiation + model/memory seams done **offline**; **real `ModelClient` done (swap #1, seam proven)**; real-model structured output (swap #1.5), Graphiti backend, JIRA adapter, and OTel pending (see [Continuing this work](#continuing-this-work-handoff))
 3. **Stage 3 — make it visible, then judge it** ← **HYPOTHESIS GATE**: OTel→Langfuse, example tickets, architect verdict, advisory eval + κ. *If it fails here, fix retrieval/prompts before building anything below.*
 4. **Stage 4 — breadth**: Confluence / Notion / Miro ingestion
 5. **Stage 5 — properties & robustness**: conflict resolution, replay verification, V2 interface stubs, honest demo
