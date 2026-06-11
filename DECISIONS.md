@@ -206,14 +206,46 @@ console script resolves to an interpreter without the `live` extra and the SDK i
 
 ---
 
+## D14 — Real-model structured output: schema-in-prompt, derived from the types ✅ (resolves OD4, swap #1.5)
+
+**Decision.** Real models are made schema-conformant by **injecting the artifact JSON schema
+into the per-call prompt**, where the schema text is **generated from the Pydantic classes**
+(`model_json_schema()`) by `_schema_block()` in `agents.py` — never hand-written, so prompt and
+code cannot drift. The schema rides the *per-call* user prompt (BA intake → `RequirementsArtifact`,
+SA analyze → `SAResponse`), **not** the persona system header, because the BA also answers
+clarifications as free text and a blanket JSON-only rule would corrupt those calls.
+Provider-native structured output (Gemini `response_schema`, Anthropic tool-use) was considered
+and **deferred**: it requires threading a format hint through the frozen `complete()` seam — a
+v2 router-era change (D8).
+
+**Result.** The real-model loop now completes end-to-end: `test_live_loop_reaches_terminal` is a
+normal passing live test (xfail removed), and `scripts/live_demo.py` shows the full quantifiable
+surface in one command — input ticket → validated `RequirementsArtifact` → FSM path → ADR with
+traces and labelled architect-added constraints → omission check → **real token usage per call**
+(FR10). Reference run: 2 calls, ~4.7k tokens, ~58s wall, omissions NONE.
+
+**Why.** Smallest change that closes the conformance gap (D13's layer 2), keeps the seam frozen,
+keeps determinism boundaries intact (prompts are still pure strings), and makes the fidelity the
+Stage-3 gate measures (D7) observable *now* rather than after Graphiti/JIRA land.
+
+**Honest limits (state them, don't gloss them).**
+- **Schema-in-prompt is best-effort, not enforced.** A model can still emit a near-miss on any
+  given call; conformance is a *rate*, measured — `scripts/live_demo.py --runs N` exists exactly
+  for this (reference: 3/3 terminal, 0 omissions, mean ≈4.6k tokens/run, ≈55s/run). The enforced
+  path (provider-native `response_schema` / tool-use) remains the v2 upgrade.
+- **Extraction tolerance lives in the *client*, not the agents:** `_strip_code_fence` (D13)
+  normalizes whole-response markdown fences. `agents.py` stays prompt-string-only; parsing is
+  still bare `model_validate_json`. A schema-parse failure surfaces as a counted ❌ in the demo's
+  reliability table, not a silent fallback.
+- **The schema costs tokens on every call** (it dominates BA intake input). The demo's usage
+  readout includes this overhead by design — it is part of the real cost surface FR10 measures.
+- Temperature is pinned at the seam default (0.0) for all loop calls.
+
+---
+
 ## Open decisions
 
 - **OD2 — Graph backend** — *partially resolved by D10/OC2* (Kuzu local, Neo4j shared);
   confirm once `graphiti-core` backend support is verified against the real library.
 - **OD3 — Architect verdict capture.** Langfuse annotations vs. a separate review sheet
   feeding the eval log. (PRD §15 Q4 — resolve at Stage 3.)
-- **OD4 — Real-model structured output (swap #1.5).** How to make real models emit
-  schema-conformant artifacts: (a) inject the Pydantic JSON schema into `BA_SYSTEM`/`SA_SYSTEM`
-  (prompt-only, smallest change, touches `agents.py`); (b) Gemini `response_schema` + Anthropic
-  tool-use threaded through an extended `complete()` seam (cleanest, changes the ABC); (c) hybrid.
-  Resolve before the Stage-3 gate — extraction fidelity is exactly what the gate measures (D7).

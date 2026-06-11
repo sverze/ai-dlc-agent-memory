@@ -1,0 +1,245 @@
+"""Run real tickets through the real BA→SA loop and show everything measurable.
+
+The quantifiable input/output surface of the prototype, in one command:
+
+    uv run --extra live python scripts/live_demo.py
+    uv run --extra live python scripts/live_demo.py "your ticket text here"
+    uv run --extra live python scripts/live_demo.py --runs 5   # reliability/cost table
+
+Prints: the input ticket, the BA's extracted RequirementsArtifact, the FSM path
+from the event log, the SA's ADR with requirement traces, the structural omission
+check, and real token usage per model call (the raw material of the token-efficiency
+metric, FR10). With ``--runs N`` it repeats the loop N times and prints a
+reliability/cost table (terminal rate, schema-parse failures, token spread) —
+schema-in-prompt (D14) is best-effort, so conformance is a *rate*, not a fact.
+Needs ANTHROPIC_API_KEY + GEMINI_API_KEY in the environment.
+"""
+
+from __future__ import annotations
+
+import sys
+import tempfile
+import time
+from collections.abc import Sequence
+from pathlib import Path
+
+from pydantic import ValidationError
+
+from agentic_memory import (
+    AgentPersona,
+    BAAgent,
+    EventLog,
+    FSM,
+    InMemoryMemoryStore,
+    Message,
+    ModelClient,
+    ModelResponse,
+    SAAgent,
+    TERMINAL_STATES,
+    TicketInput,
+    make_model_client,
+    run_loop,
+)
+
+DEFAULT_TICKET = (
+    "As a user I want to reset my password via email so I can regain access "
+    "if I forget it. The reset link must expire after 30 minutes and all reset "
+    "attempts must be logged for the security team."
+)
+
+
+class UsageRecorder(ModelClient):
+    """Wraps the real client and records (persona, model, usage) per call."""
+
+    def __init__(self, inner: ModelClient) -> None:
+        super().__init__()
+        self.inner = inner
+        self.calls: list[tuple[AgentPersona, str, int, int]] = []
+
+    def model_for(self, persona: AgentPersona) -> str:
+        return self.inner.model_for(persona)
+
+    def complete(
+        self,
+        messages: Sequence[Message],
+        *,
+        persona: AgentPersona,
+        system: str | None = None,
+        temperature: float = 0.0,
+    ) -> ModelResponse:
+        resp = self.inner.complete(
+            messages, persona=persona, system=system, temperature=temperature
+        )
+        self.calls.append(
+            (persona, resp.model, resp.usage.input_tokens, resp.usage.output_tokens)
+        )
+        return resp
+
+
+def _run_once(ticket: TicketInput, *, verbose: bool) -> dict:
+    """One full loop run; returns measurable outcomes. Prints detail if verbose."""
+    log_path = Path(tempfile.mkdtemp()) / "events.jsonl"
+    client = UsageRecorder(make_model_client())
+    store = InMemoryMemoryStore()
+    ba, sa = BAAgent(client, store), SAAgent(client, store)
+    fsm = FSM(EventLog(log_path))
+
+    stats: dict = {"ok": False, "error": None}
+    started = time.monotonic()
+    try:
+        result = None
+        for attempt in range(4):  # transient provider 5xx happen; retry a few times
+            try:
+                result = run_loop(ticket, ba=ba, sa=sa, fsm=fsm)
+                break
+            except Exception as exc:
+                if any(s in str(exc) for s in ("503", "UNAVAILABLE", "overload")):
+                    if verbose:
+                        print(f"  … provider busy (attempt {attempt + 1}), retrying")
+                    time.sleep(6)
+                    continue
+                raise
+        if result is None:
+            stats["error"] = "provider unavailable after retries"
+            return stats
+    except ValidationError as exc:
+        # The D14 reliability gap made measurable: model output failed the schema.
+        stats["error"] = f"schema-parse failure: {str(exc).splitlines()[0]}"
+        return stats
+    except Exception as exc:
+        stats["error"] = f"{type(exc).__name__}: {str(exc)[:120]}"
+        return stats
+    finally:
+        stats["wall_s"] = time.monotonic() - started
+        stats["tokens_in"] = sum(c[2] for c in client.calls)
+        stats["tokens_out"] = sum(c[3] for c in client.calls)
+        stats["calls"] = len(client.calls)
+
+    art = result.artifact
+    assert art is not None
+    omitted = result.adr.omitted_requirement_ids(art) if result.adr else None
+    stats.update(
+        ok=True,
+        terminal=result.final_state in TERMINAL_STATES,
+        final_state=str(result.final_state),
+        clarify_rounds=result.clarify_rounds,
+        escalated=result.escalated,
+        requirements=len(art.requirements),
+        omitted=len(omitted) if omitted is not None else None,
+    )
+    if not verbose:
+        return stats
+
+    print()
+    print("═" * 72)
+    print("🧾 BA OUTPUT — RequirementsArtifact (real Gemini, schema-validated)")
+    print("═" * 72)
+    print(f"  title:   {art.title}")
+    print(f"  summary: {art.summary}")
+    print(f"  requirements ({len(art.requirements)}):")
+    for r in art.requirements:
+        print(f"    - [{r.priority or 'unset'}] {r.id}: {r.text}")
+    for label, items in (
+        ("acceptance_criteria", [c.text for c in art.acceptance_criteria]),
+        ("key_facts", art.key_facts),
+        ("open_questions", art.open_questions),
+    ):
+        if items:
+            print(f"  {label} ({len(items)}):")
+            for it in items:
+                print(f"    - {it}")
+
+    print()
+    print("═" * 72)
+    print("🔀 FSM PATH (from the append-only event log)")
+    print("═" * 72)
+    for entry in fsm.event_log.read_all():
+        if entry.state is not None:
+            forced = "  ⚠️ forced" if entry.payload.get("forced") else ""
+            print(
+                f"  {entry.seq}: {entry.state.from_state} → {entry.state.to_state}"
+                f"  ({entry.agent}: {entry.payload.get('reason')}){forced}"
+            )
+    print(f"  final: {result.final_state}  (terminal={stats['terminal']}, "
+          f"clarify_rounds={result.clarify_rounds}, escalated={result.escalated})")
+
+    if result.adr:
+        adr = result.adr
+        print()
+        print("═" * 72)
+        print("🏛️  SA OUTPUT — ADR (real Claude)")
+        print("═" * 72)
+        print(f"  title:    {adr.title}")
+        print(f"  decision: {adr.decision}")
+        print(f"  rationale:{adr.rationale}")
+        print(f"  traces ({len(adr.requirement_traces)}):")
+        for t in adr.requirement_traces:
+            mark = "✓ addressed" if t.addressed else f"→ deferred ({t.deferred_reason})"
+            print(f"    - {t.requirement_id}: {mark}")
+        if adr.added_constraints:
+            print(f"  architect-added constraints ({len(adr.added_constraints)}):")
+            for c in adr.added_constraints:
+                print(f"    - {c.text}  (why: {c.justification})")
+        print(f"  ⚖️  omission check: {omitted if omitted else 'NONE ✅'}")
+
+    print()
+    print("═" * 72)
+    print("📊 QUANTIFIED — real token usage per call (FR10 raw material)")
+    print("═" * 72)
+    print("  (input tokens include the injected JSON schema — D14 overhead, by design)")
+    for i, (persona, model, t_in, t_out) in enumerate(client.calls, 1):
+        print(f"  call {i}: {persona.value:<20} {model:<22} in={t_in:>6}  out={t_out:>6}")
+    print(f"  TOTAL: {stats['calls']} calls   in={stats['tokens_in']}  "
+          f"out={stats['tokens_out']}  all={stats['tokens_in'] + stats['tokens_out']} tokens"
+          f"   wall={stats['wall_s']:.1f}s")
+    print(f"  event log: {log_path}")
+    return stats
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    runs = 1
+    if "--runs" in args:
+        i = args.index("--runs")
+        runs = max(1, int(args[i + 1]))
+        del args[i : i + 2]
+    body = args[0] if args else DEFAULT_TICKET
+    ticket = TicketInput(id="DEMO-1", body=body)
+
+    print("═" * 72)
+    print("📥 INPUT — delivery ticket")
+    print("═" * 72)
+    print(f"  id:   {ticket.id}")
+    print(f"  body: {ticket.body}")
+
+    results = []
+    for n in range(runs):
+        if runs > 1:
+            print(f"\n--- run {n + 1}/{runs} ---")
+        results.append(_run_once(ticket, verbose=(n == 0)))
+
+    if runs > 1:
+        ok = [r for r in results if r.get("ok")]
+        totals = [r["tokens_in"] + r["tokens_out"] for r in results if "tokens_in" in r]
+        print()
+        print("═" * 72)
+        print(f"📈 RELIABILITY / COST over {runs} runs (schema-in-prompt is best-effort — D14)")
+        print("═" * 72)
+        print(f"  terminal-success: {len(ok)}/{runs}  "
+              f"({100 * len(ok) / runs:.0f}%)")
+        for n, r in enumerate(results, 1):
+            if r.get("ok"):
+                print(f"  run {n}: ✅ {r['final_state']:<12} reqs={r['requirements']}  "
+                      f"omitted={r['omitted']}  clarify={r['clarify_rounds']}  "
+                      f"tokens={r['tokens_in'] + r['tokens_out']}  wall={r['wall_s']:.0f}s")
+            else:
+                print(f"  run {n}: ❌ {r['error']}")
+        if totals:
+            print(f"  tokens/run: min={min(totals)}  max={max(totals)}  "
+                  f"mean={sum(totals) // len(totals)}")
+
+    return 0 if all(r.get("ok") for r in results) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

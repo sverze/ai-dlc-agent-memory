@@ -75,22 +75,13 @@ def test_gemini_live_roundtrip():
     assert resp.usage.total_tokens > 0
 
 
-@pytest.mark.xfail(
-    reason=(
-        "Seam + fence-normalization proven, but real models don't yet emit "
-        "schema-conformant artifacts (missing required fields, priority enum) — "
-        "needs schema-injection / response_schema at the agent layer (next "
-        "increment). This test documents the end-state target."
-    ),
-    strict=False,
-)
 @pytest.mark.skipif(not _HAVE_BOTH, reason="need both ANTHROPIC and GEMINI keys")
 def test_live_loop_reaches_terminal(tmp_path):
-    """The end-state target of the agent loop: the SAME run_loop drives real
-    Claude + Gemini to a terminal state with a real, schema-validated artifact and
-    ADR. Currently xfail — the ModelClient seam holds (see the smoke tests; the
-    fence fix makes the JSON parse), but real-model schema conformance is the next
-    increment. Network-dependent; retries transient 5xx a couple of times."""
+    """The point of Stage 2 going live: the SAME run_loop drives real Claude +
+    Gemini to a terminal state with a real, schema-validated artifact and ADR.
+    Green since schema injection (D14) — the prompts now carry the artifact JSON
+    schemas derived from the Pydantic classes. Network-dependent; retries
+    transient 5xx a couple of times."""
     client = make_model_client()
     store = InMemoryMemoryStore()
     ba = BAAgent(client, store)

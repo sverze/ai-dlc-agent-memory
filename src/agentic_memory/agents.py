@@ -13,11 +13,30 @@ in Stage 2 behind the same ``ModelClient`` interface, so this code does not chan
 
 from __future__ import annotations
 
+import json
+
 from pydantic import BaseModel, Field
 
 from .artifacts import ADR, AgentPersona, RequirementsArtifact
 from .graph import DEFAULT_GROUP, MemoryStore
 from .models import Message, MessageRole, ModelClient
+
+
+def _schema_block(model: type[BaseModel]) -> str:
+    """Render a model's JSON schema as a prompt block.
+
+    Derived from the Pydantic class itself — never hand-written — so the prompt
+    can't drift from the code (the real-model conformance gap behind OD4/D13:
+    models can't match a schema they've never seen). Injected per-call rather
+    than into the persona system header, because not every call returns JSON
+    (the BA answers clarifications as free text).
+    """
+    return (
+        "Return ONLY raw JSON (no markdown fences, no commentary) that validates "
+        "against this JSON Schema. Include every required field; for enum fields "
+        "use exactly the listed values, or null where the schema allows it:\n"
+        + json.dumps(model.model_json_schema(), separators=(",", ":"))
+    )
 
 BA_SYSTEM = (
     "You are a Business Analyst. Read the delivery ticket and extract structured, "
@@ -79,7 +98,10 @@ class BAAgent(Agent):
 
     def intake(self, ticket: TicketInput, *, group_id: str = DEFAULT_GROUP) -> RequirementsArtifact:
         """Ticket → RequirementsArtifact → shared memory."""
-        text = self._ask(f"Ticket {ticket.id}:\n{ticket.body}\n\nReturn RequirementsArtifact JSON.")
+        text = self._ask(
+            f"Ticket {ticket.id}:\n{ticket.body}\n\n"
+            f"Extract the RequirementsArtifact. {_schema_block(RequirementsArtifact)}"
+        )
         artifact = RequirementsArtifact.model_validate_json(text)
         # The model shouldn't invent the source id; bind it to the real ticket.
         artifact = artifact.model_copy(update={"source_ticket_id": ticket.id})
@@ -112,7 +134,12 @@ class SAAgent(Agent):
         list of (clarification_node_id, request) it wrote to memory."""
         reqs = self.store.requirements_for(artifact.source_ticket_id, group_id=group_id)
         summary = "; ".join(f"{r.id}: {r.attrs.get('text')}" for r in reqs)
-        text = self._ask(f"Requirements: {summary}\n\nReturn SAResponse JSON (clarify or decide).")
+        text = self._ask(
+            f"Requirements: {summary}\n\n"
+            "Decide: if any requirement is underspecified, return clarifications; "
+            "otherwise return an adr with a requirement_trace for EVERY requirement id "
+            f"listed above (addressed or explicitly deferred). {_schema_block(SAResponse)}"
+        )
         response = SAResponse.model_validate_json(text)
 
         written: list[tuple[str, ClarificationRequest]] = []
