@@ -61,10 +61,11 @@ are *advisory* and always measured against the human verdict — never used to o
 | 4 — Breadth | Confluence / Notion / Miro ingestion | ⬜ Not started |
 | 5 — Properties & robustness | conflict resolution, replay verification, V2 stubs, demo | ⬜ Not started |
 
-**What "offline" means for Stage 2:** the agent logic, the memory model, and the negotiation
-loop are real and fully exercised; the model client and graph store are fakes. The interfaces
-(`ModelClient`, `MemoryStore`) are the integration seams — dropping in real implementations
-behind them requires no change to agent or loop code.
+**Two ways to run everything:** the **offline path** (default — `FakeModelClient` +
+`InMemoryMemoryStore`, zero keys/services/spend, 43 deterministic tests) and the **real path**
+(`make_model_client()` + `GraphitiMemoryStore`, gated behind the `live`/`graph` extras). Both
+sit behind the same seams (`ModelClient`, `MemoryStore`), so agent and loop code is identical
+in both — that's decision D11, and the gated parity tests prove it holds.
 
 ### Modules
 
@@ -73,11 +74,11 @@ behind them requires no change to agent or loop code.
 | `src/agentic_memory/artifacts.py` | Typed data contracts: `RequirementsArtifact`, `ADR` (with `RequirementTrace` / `AddedConstraint` encoding the eval rubric), `KnowledgeEntry` write envelope | ✅ Done |
 | `src/agentic_memory/events.py` | Append-only JSONL `EventLog` with monotonic sequence numbers + `replay()` reducer | ✅ Done |
 | `src/agentic_memory/fsm.py` | `FSM` orchestrator: `intake → analysis ⇄ clarification → decision (+ escalation)`, whitelist transitions, clarify-round cap with forced escalation, `replay_final_state()` | ✅ Done |
-| `src/agentic_memory/models.py` | `ModelClient` seam + offline `FakeModelClient` + **real `AnthropicModelClient` / `GeminiModelClient`** (lazy SDK imports, env keys, fence-normalized) and `make_model_client()` routing factory. Live smoke tests prove real calls + token usage. | ✅ Seam + real clients done; live loop pending structured output (OD4) |
+| `src/agentic_memory/models.py` | `ModelClient` seam + offline `FakeModelClient` + **real `AnthropicModelClient` / `GeminiModelClient`** (lazy SDK imports, env keys, fence-normalized) and `make_model_client()` routing factory with per-role model override (`--ba-model`). | ✅ Done (swaps #1/#1.5) |
 | `src/agentic_memory/graph.py` | L4 `MemoryStore` seam over Graphiti: node/edge types from our artifacts (D10), domain writes (`write_requirements`/`write_adr`), and omission + key-fact queries. Offline `InMemoryMemoryStore` fake. | ✅ Done |
 | `src/agentic_memory/graphiti_store.py` | **Real `GraphitiMemoryStore`** — the six seam primitives over graphiti-core EntityNode/EntityEdge on Neo4j (D15): namespaced uuids, lossless `attrs_json`, one event loop per store. 11 gated tests prove fake/real parity. | ✅ Done (swap #2) |
-| `src/agentic_memory/agents.py` | `BAAgent` (ticket → `RequirementsArtifact` → memory) and `SAAgent` (memory → `ADR` or clarifications), both over the `ModelClient` + `MemoryStore` seams. | ✅ Done (offline) |
-| `src/agentic_memory/loop.py` | `run_loop` — drives the FSM through `intake → analysis ⇄ clarification → decision (+ escalation)`; the full BA→SA roundtrip, logged and replayable. | ✅ Done (offline) |
+| `src/agentic_memory/agents.py` | `BAAgent` (ticket → `RequirementsArtifact` → memory) and `SAAgent` (memory → `ADR` or clarifications), both over the `ModelClient` + `MemoryStore` seams; prompts carry type-derived JSON schemas (D14). | ✅ Done |
+| `src/agentic_memory/loop.py` | `run_loop` — drives the FSM through `intake → analysis ⇄ clarification → decision (+ escalation)`; the full BA→SA roundtrip, logged and replayable; proven on the full real stack. | ✅ Done |
 
 `43 passed` offline — `tests/test_{artifacts,events,fsm,models,graph,loop}.py`. Plus two
 gated opt-in suites, both passing: `-m live` (real provider calls + end-to-end loop) and
@@ -119,6 +120,16 @@ To exercise the **real graph store** you need the `graph` extra and Neo4j runnin
 ```bash
 docker compose up -d                                          # Neo4j on :7687 / :7474
 uv run --extra graph python -m pytest -m graph -v             # 11 fake/real parity tests
+```
+
+**Neo4j console:** http://localhost:7474 — username `neo4j`, password `devpassword`
+(the docker-compose local-dev default; override via `NEO4J_AUTH` + `NEO4J_PASSWORD` for
+anything shared). After a `--graph` demo run, paste the Cypher the demo prints to see that
+run's graph, e.g.:
+
+```cypher
+MATCH (n:Entity {group_id: '<group_id from the demo output>'})-[r]-(m) RETURN n, r, m
+-- all runs in the store:  MATCH (n:Entity) RETURN DISTINCT n.group_id
 ```
 
 > Gemini free tier allows **20 requests/day/model** — roughly a handful of full runs per model
@@ -179,7 +190,7 @@ Python-first, because the memory/agent/eval ecosystem is Python-native.
 | Orchestration | Hand-rolled deterministic FSM (no agent framework) |
 | Agents | Direct provider SDKs (`anthropic`, `google-genai`) behind a `ModelClient` interface |
 | L4 semantic memory | Graphiti (temporal knowledge graph) on Neo4j Community |
-| Graph extraction LLM | Gemini Flash |
+| Graph writes | Deterministic from typed artifacts — **no LLM extraction in the V1 loop** (D10); Graphiti extraction reserved for V2 free-text |
 | L2 working memory | In-process Pydantic artifacts |
 | Event log | Append-only JSONL |
 | Observability | Langfuse + OpenTelemetry (self-hosted) |
