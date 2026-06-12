@@ -12,6 +12,8 @@ live = ["anthropic>=0.40", "google-genai>=1.0"]
 # Real temporal graph (L4) — Graphiti over Kuzu (embedded, local dev) or Neo4j
 # (shared/demo via docker-compose). Offline path never needs these (D11).
 graph = ["graphiti-core[kuzu]>=0.29"]
+# Real JIRA ticket source (direct REST per D6). Offline path never needs this (D11).
+jira = ["httpx>=0.27"]
 
 [dependency-groups]
 dev = ["pytest>=8"]
@@ -26,9 +28,10 @@ packages = ["src/agentic_memory"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-# Default run stays offline and free: live/graph tests opt in with `-m live` / `-m graph`.
-addopts = "-q -m 'not live and not graph'"
+# Default run stays offline and free: live/graph/jira tests opt in with `-m <marker>`.
+addopts = "-q -m 'not live and not graph and not jira'"
 markers = [
     "live: hits a real provider API (needs keys, costs money); excluded by default",
     "graph: needs a running Neo4j (docker compose up -d); excluded by default",
+    "jira: needs the jira extra (httpx); live fetch additionally needs ATLASSIAN_* env",
 ]

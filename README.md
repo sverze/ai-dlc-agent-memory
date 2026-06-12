@@ -56,7 +56,7 @@ are *advisory* and always measured against the human verdict — never used to o
 | Stage | Scope | State |
 |-------|-------|-------|
 | **1 — Substrate** | typed artifacts, append-only event log, deterministic FSM | ✅ **Complete** |
-| **2 — Core loop** | BA/SA agents, L4 memory, FSM negotiation, model seam | 🟡 **Full real stack runs (swaps #1, #1.5, #2 ✅); JIRA/OTel pending** |
+| **2 — Core loop** | BA/SA agents, L4 memory, FSM negotiation, model seam | 🟡 **Full real stack runs (swaps #1, #1.5, #2 ✅); JIRA adapter built (#3 ✅); OTel pending** |
 | 3 — Make it visible, then judge it ← **HYPOTHESIS GATE** | OTel→Langfuse, frozen scenarios, architect verdict, advisory eval + κ | ⬜ Not started |
 | 4 — Breadth | Confluence / Notion / Miro ingestion | ⬜ Not started |
 | 5 — Properties & robustness | conflict resolution, replay verification, V2 stubs, demo | ⬜ Not started |
@@ -77,6 +77,7 @@ in both — that's decision D11, and the gated parity tests prove it holds.
 | `src/agentic_memory/models.py` | `ModelClient` seam + offline `FakeModelClient` + **real `AnthropicModelClient` / `GeminiModelClient`** (lazy SDK imports, env keys, fence-normalized) and `make_model_client()` routing factory with per-role model override (`--ba-model`). | ✅ Done (swaps #1/#1.5) |
 | `src/agentic_memory/graph.py` | L4 `MemoryStore` seam over Graphiti: node/edge types from our artifacts (D10), domain writes (`write_requirements`/`write_adr`), and omission + key-fact queries. Offline `InMemoryMemoryStore` fake. | ✅ Done |
 | `src/agentic_memory/graphiti_store.py` | **Real `GraphitiMemoryStore`** — the six seam primitives over graphiti-core EntityNode/EntityEdge on Neo4j (D15): namespaced uuids, lossless `attrs_json`, one event loop per store. 11 gated tests prove fake/real parity. | ✅ Done (swap #2) |
+| `src/agentic_memory/tickets.py` | `TicketSource` seam (D6/D16): `InMemoryTicketSource` fake + **real `JiraTicketSource`** (REST v3, basic auth, deterministic ADF→text flattening, mapped errors, `jira` extra). | ✅ Done (swap #3) |
 | `src/agentic_memory/agents.py` | `BAAgent` (ticket → `RequirementsArtifact` → memory) and `SAAgent` (memory → `ADR` or clarifications), both over the `ModelClient` + `MemoryStore` seams; prompts carry type-derived JSON schemas (D14). | ✅ Done |
 | `src/agentic_memory/loop.py` | `run_loop` — drives the FSM through `intake → analysis ⇄ clarification → decision (+ escalation)`; the full BA→SA roundtrip, logged and replayable; proven on the full real stack. | ✅ Done |
 
@@ -122,6 +123,14 @@ docker compose up -d                                          # Neo4j on :7687 /
 uv run --extra graph python -m pytest -m graph -v             # 11 fake/real parity tests
 ```
 
+To pull **real JIRA tickets** you need the `jira` extra and three env vars
+(`ATLASSIAN_URL`, `ATLASSIAN_EMAIL`, `ATLASSIAN_API_TOKEN` — see `.env.example`):
+
+```bash
+uv run --extra jira python -m pytest -m jira -v   # mocked-transport tests + env-gated live fetch
+uv run --extra live --extra graph --extra jira python scripts/live_demo.py --graph --jira SCRUM-1
+```
+
 **Neo4j console:** http://localhost:7474 — username `neo4j`, password `devpassword`
 (the docker-compose local-dev default; override via `NEO4J_AUTH` + `NEO4J_PASSWORD` for
 anything shared). After a `--graph` demo run, paste the Cypher the demo prints to see that
@@ -161,9 +170,10 @@ assert replay_final_state(log) is fsm.state   # the log replays to identical sta
 │   ├── models.py            # ModelClient seam + FakeModelClient + real Anthropic/Gemini clients ✅
 │   ├── graph.py             # MemoryStore seam + InMemoryMemoryStore fake
 │   ├── graphiti_store.py    # real GraphitiMemoryStore over Neo4j ✅ (D15)
+│   ├── tickets.py           # TicketSource seam + real JiraTicketSource ✅ (D16)
 │   ├── agents.py            # BAAgent / SAAgent (schema-in-prompt, D14)
 │   └── loop.py              # run_loop — the FSM-driven roundtrip
-├── scripts/live_demo.py     # one command: real ticket → ADR + token usage (+ --graph, --runs)
+├── scripts/live_demo.py     # one command: ticket → ADR + token usage (+ --graph, --jira, --runs)
 ├── docker-compose.yml       # Neo4j for the real graph store
 ├── tests/                   # pytest suite (43 offline + gated live/graph)
 ├── Plans/                   # design proposals (e.g. graphiti-entity-edge-model.md → D10)
@@ -217,10 +227,12 @@ touching `agents.py` or `loop.py`:
    Neo4j (`docker compose up -d`); Kuzu was retired before adoption (deprecated upstream — D15).
    11 gated tests prove fake/real parity; `--graph` on the demo runs the full real stack and
    shows the run's nodes/edges in Neo4j.
-3. **JIRA `ToolAdapter`** ← **DO THIS NEXT** — direct API (`httpx`) → `TicketInput`. This is the
-   only tool needed to reach the hypothesis gate (D6).
-4. **OTel → Langfuse** — instrument each `ModelClient.complete` call; the `Usage` field on
-   `ModelResponse` is already there to feed token metrics (FR10).
+3. **JIRA `ToolAdapter`** — ✅ **Built (swap #3, D16).** `TicketSource` seam in `tickets.py`:
+   offline fake + `JiraTicketSource` (REST v3, ADF→text, `jira` extra). Demo `--jira KEY`
+   runs the complete pipeline JIRA → BA → graph → SA → ADR. Set `ATLASSIAN_URL` /
+   `ATLASSIAN_EMAIL` / `ATLASSIAN_API_TOKEN`; the personal→work switch is env-only.
+4. **OTel → Langfuse** ← **DO THIS NEXT** — instrument each `ModelClient.complete` call; the
+   `Usage` field on `ModelResponse` is already there to feed token metrics (FR10).
 
 Then Stage 3 (the gate): a frozen, externally-authored scenario set + a senior architect's
 accept/revise/reject verdict (D7). **Open decision OD3** — where the architect records verdicts —

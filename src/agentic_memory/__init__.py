@@ -37,6 +37,7 @@ from .graph import (
     NodeType,
 )
 from .graphiti_store import GraphitiMemoryStore, make_memory_store
+from .tickets import InMemoryTicketSource, JiraTicketSource, TicketSource, adf_to_text
 from .models import (
     DEFAULT_MODEL_BY_ROLE,
     AnthropicModelClient,
@@ -89,6 +90,11 @@ __all__ = [
     "TicketInput",
     "LoopResult",
     "run_loop",
+    # tickets (ToolAdapter seam)
+    "InMemoryTicketSource",
+    "JiraTicketSource",
+    "TicketSource",
+    "adf_to_text",
     # graph (L4 shared memory)
     "DEFAULT_GROUP",
     "EdgeType",

@@ -294,6 +294,29 @@ quota, not regression.**
 
 ---
 
+## D16 — JIRA ToolAdapter: direct REST, config-only environment switch ✅ (implements D6, swap #3)
+
+**Decision.** Tickets enter the loop through a `TicketSource` seam (`tickets.py`):
+`InMemoryTicketSource` (offline fake, D11) and `JiraTicketSource` — JIRA Cloud REST v3 via
+`httpx` (optional `jira` extra, lazy import), basic auth from `ATLASSIAN_URL` /
+`ATLASSIAN_EMAIL` / `ATLASSIAN_API_TOKEN`. **No MCP** — D6 stands: direct API to the gate,
+MCP for post-gate breadth. The description field arrives as **ADF** (Atlassian Document
+Format JSON); `adf_to_text` flattens it deterministically, collecting every text leaf
+(paragraphs, nested lists, code blocks, mentions) — a dropped list item here would surface
+downstream as a phantom requirement omission, so flattening fidelity is tested explicitly.
+
+**Environment switch is pure configuration.** Testing runs against a personal Atlassian
+site with an unscoped API token (defaults to the account's own capabilities); pointing at a
+work site later means changing the three env vars, nothing else. Errors are mapped (401 →
+"check email/token", 404 → "ticket not found") and the token value is never logged.
+
+**Test layers.** Offline: fake + ADF flattener (in the default suite). `-m jira` (extra
+only, no network): mocked-transport request-shape and error-mapping tests. Live (env-gated,
+skips cleanly): one real fetch, ticket key via `JIRA_TEST_TICKET`. Demo: `--jira KEY` makes
+the complete pipeline real — JIRA → BA → graph → SA → ADR.
+
+---
+
 ## Open decisions
 
 - **OD3 — Architect verdict capture.** Langfuse annotations vs. a separate review sheet

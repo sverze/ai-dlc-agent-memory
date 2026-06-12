@@ -9,6 +9,9 @@ The quantifiable input/output surface of the prototype, in one command:
     # FULL REAL STACK — real models + real Graphiti graph (docker compose up -d first):
     uv run --extra live --extra graph python scripts/live_demo.py --graph
 
+    # COMPLETE PIPELINE — pull the ticket from real JIRA too (needs ATLASSIAN_* env):
+    uv run --extra live --extra graph --extra jira python scripts/live_demo.py --graph --jira SCRUM-1
+
 Prints: the input ticket, the BA's extracted RequirementsArtifact, the FSM path
 from the event log, the SA's ADR with requirement traces, the structural omission
 check, and real token usage per model call (the raw material of the token-efficiency
@@ -249,8 +252,18 @@ def main() -> int:
         i = args.index("--ba-model")
         ba_model = args[i + 1]
         del args[i : i + 2]
-    body = args[0] if args else DEFAULT_TICKET
-    ticket = TicketInput(id="DEMO-1", body=body)
+    jira_key = None
+    if "--jira" in args:  # pull the ticket from real JIRA (needs ATLASSIAN_* env)
+        i = args.index("--jira")
+        jira_key = args[i + 1]
+        del args[i : i + 2]
+
+    if jira_key:
+        from agentic_memory import JiraTicketSource  # needs the `jira` extra
+
+        ticket = JiraTicketSource().fetch(jira_key)
+    else:
+        ticket = TicketInput(id="DEMO-1", body=args[0] if args else DEFAULT_TICKET)
 
     print("═" * 72)
     print("📥 INPUT — delivery ticket")
