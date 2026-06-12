@@ -40,22 +40,23 @@ are *advisory* and always measured against the human verdict — never used to o
 
 ## Development status
 
-> **Checkpoint (2026-06-11) — the real-model loop runs end-to-end.** Swap #1 (real
-> `ModelClient`: Anthropic + Gemini) and swap #1.5 (schema-in-prompt structured output, D14)
-> are done. **One command now runs a real ticket through real models and prints the full
-> quantifiable surface** — requirements, ADR with traces, omission check, token usage:
+> **Checkpoint (2026-06-12) — the FULL REAL STACK runs.** Swap #1 (real `ModelClient`),
+> swap #1.5 (schema-in-prompt, D14), and **swap #2 (real Graphiti graph over Neo4j, D15)**
+> are done. One command runs a real ticket through real models into a **real temporal graph**:
 >
 > ```bash
-> uv sync --extra live   # needs ANTHROPIC_API_KEY + GEMINI_API_KEY in env
-> uv run --extra live python scripts/live_demo.py "your ticket text here"
+> docker compose up -d                              # Neo4j (browser: http://localhost:7474)
+> uv run --extra live --extra graph python scripts/live_demo.py --graph
 > ```
 >
-> Remaining for Stage 2: the Graphiti backend (swap #2), the JIRA tool (swap #3), OTel (swap #4).
+> The demo prints requirements, ADR with traces, omission check, token usage — and a raw
+> Cypher count of the nodes/edges the run left in Neo4j (reference: 18 nodes / 19 edges,
+> per-run `group_id`). Remaining for Stage 2: the JIRA tool (swap #3), OTel (swap #4).
 
 | Stage | Scope | State |
 |-------|-------|-------|
 | **1 — Substrate** | typed artifacts, append-only event log, deterministic FSM | ✅ **Complete** |
-| **2 — Core loop** | BA/SA agents, L4 memory, FSM negotiation, model seam | 🟡 **Real-model loop runs end-to-end (swaps #1 + #1.5 ✅); Graphiti/JIRA/OTel pending** |
+| **2 — Core loop** | BA/SA agents, L4 memory, FSM negotiation, model seam | 🟡 **Full real stack runs (swaps #1, #1.5, #2 ✅); JIRA/OTel pending** |
 | 3 — Make it visible, then judge it ← **HYPOTHESIS GATE** | OTel→Langfuse, frozen scenarios, architect verdict, advisory eval + κ | ⬜ Not started |
 | 4 — Breadth | Confluence / Notion / Miro ingestion | ⬜ Not started |
 | 5 — Properties & robustness | conflict resolution, replay verification, V2 stubs, demo | ⬜ Not started |
@@ -73,13 +74,15 @@ behind them requires no change to agent or loop code.
 | `src/agentic_memory/events.py` | Append-only JSONL `EventLog` with monotonic sequence numbers + `replay()` reducer | ✅ Done |
 | `src/agentic_memory/fsm.py` | `FSM` orchestrator: `intake → analysis ⇄ clarification → decision (+ escalation)`, whitelist transitions, clarify-round cap with forced escalation, `replay_final_state()` | ✅ Done |
 | `src/agentic_memory/models.py` | `ModelClient` seam + offline `FakeModelClient` + **real `AnthropicModelClient` / `GeminiModelClient`** (lazy SDK imports, env keys, fence-normalized) and `make_model_client()` routing factory. Live smoke tests prove real calls + token usage. | ✅ Seam + real clients done; live loop pending structured output (OD4) |
-| `src/agentic_memory/graph.py` | L4 `MemoryStore` seam over Graphiti: node/edge types from our artifacts (D10), domain writes (`write_requirements`/`write_adr`), and omission + key-fact queries. Offline `InMemoryMemoryStore` fake; real Graphiti backend pending services. | ✅ Seam done (Stage 2) |
+| `src/agentic_memory/graph.py` | L4 `MemoryStore` seam over Graphiti: node/edge types from our artifacts (D10), domain writes (`write_requirements`/`write_adr`), and omission + key-fact queries. Offline `InMemoryMemoryStore` fake. | ✅ Done |
+| `src/agentic_memory/graphiti_store.py` | **Real `GraphitiMemoryStore`** — the six seam primitives over graphiti-core EntityNode/EntityEdge on Neo4j (D15): namespaced uuids, lossless `attrs_json`, one event loop per store. 11 gated tests prove fake/real parity. | ✅ Done (swap #2) |
 | `src/agentic_memory/agents.py` | `BAAgent` (ticket → `RequirementsArtifact` → memory) and `SAAgent` (memory → `ADR` or clarifications), both over the `ModelClient` + `MemoryStore` seams. | ✅ Done (offline) |
 | `src/agentic_memory/loop.py` | `run_loop` — drives the FSM through `intake → analysis ⇄ clarification → decision (+ escalation)`; the full BA→SA roundtrip, logged and replayable. | ✅ Done (offline) |
 
-`43 passed` offline — `tests/test_{artifacts,events,fsm,models,graph,loop}.py`. Plus
-`tests/test_live_models.py` (gated, opt-in): 2 live smoke tests and the end-to-end
-real-model loop test — all passing. Decisions in [`DECISIONS.md`](DECISIONS.md).
+`43 passed` offline — `tests/test_{artifacts,events,fsm,models,graph,loop}.py`. Plus two
+gated opt-in suites, both passing: `-m live` (real provider calls + end-to-end loop) and
+`-m graph` (11 tests proving `GraphitiMemoryStore` is behaviorally identical to the fake
+against dockerized Neo4j). Decisions in [`DECISIONS.md`](DECISIONS.md).
 
 > See the loop run end-to-end (prints requirements, FSM path, ADR, omission check):
 > ```bash
@@ -111,6 +114,17 @@ uv sync --extra live
 uv run --extra live python -m pytest -m live -v   # makes real API calls (costs money)
 ```
 
+To exercise the **real graph store** you need the `graph` extra and Neo4j running:
+
+```bash
+docker compose up -d                                          # Neo4j on :7687 / :7474
+uv run --extra graph python -m pytest -m graph -v             # 11 fake/real parity tests
+```
+
+> Gemini free tier allows **20 requests/day/model** — roughly a handful of full runs per model
+> per day. **A 429 RESOURCE_EXHAUSTED from the demo means quota, not a regression.** Point the BA
+> at a sibling quota bucket to keep going: `scripts/live_demo.py --ba-model gemini-2.5-flash-lite`.
+
 ```python
 from agentic_memory import EventLog, FSM, DLCState, TransitionProposal, replay_final_state
 
@@ -134,13 +148,15 @@ assert replay_final_state(log) is fsm.state   # the log replays to identical sta
 │   ├── events.py            # append-only event log + replay
 │   ├── fsm.py               # deterministic orchestrator
 │   ├── models.py            # ModelClient seam + FakeModelClient + real Anthropic/Gemini clients ✅
-│   ├── graph.py             # MemoryStore seam + InMemoryMemoryStore  ← swap point (Graphiti)
+│   ├── graph.py             # MemoryStore seam + InMemoryMemoryStore fake
+│   ├── graphiti_store.py    # real GraphitiMemoryStore over Neo4j ✅ (D15)
 │   ├── agents.py            # BAAgent / SAAgent (schema-in-prompt, D14)
 │   └── loop.py              # run_loop — the FSM-driven roundtrip
-├── scripts/live_demo.py     # one command: real ticket → ADR + token usage, quantified
-├── tests/                   # pytest suite (43 offline + 3 gated live)
+├── scripts/live_demo.py     # one command: real ticket → ADR + token usage (+ --graph, --runs)
+├── docker-compose.yml       # Neo4j for the real graph store
+├── tests/                   # pytest suite (43 offline + gated live/graph)
 ├── Plans/                   # design proposals (e.g. graphiti-entity-edge-model.md → D10)
-├── DECISIONS.md             # durable decision log (D1–D14) — read this first
+├── DECISIONS.md             # durable decision log (D1–D15) — read this first
 ├── .env.example             # setup template (spec Appendix A.2)
 ├── pyproject.toml           # uv project; pytest config
 ├── uv.lock                  # pinned deps (committed — NFR6 reproducibility)
@@ -186,11 +202,12 @@ touching `agents.py` or `loop.py`:
    **Swap #1.5 also done (D14):** prompts carry the artifact JSON schemas derived from the Pydantic
    classes (`_schema_block` in `agents.py`), so the real loop completes —
    `test_live_loop_reaches_terminal` passes and `scripts/live_demo.py` shows the whole run.
-2. **Real graph store** ← **DO THIS NEXT** — implement `MemoryStore` (see `graph.py`) as `GraphitiMemoryStore`
-   over `graphiti-core`. Backend: Kuzu (embedded) for local dev, Neo4j for shared/demo (D10/OC2).
-   Add a `docker-compose.yml`. The node/edge model is settled in `Plans/graphiti-entity-edge-model.md`.
-3. **JIRA `ToolAdapter`** — direct API (`httpx`) → `TicketInput`. This is the only tool needed
-   to reach the hypothesis gate (D6).
+2. **Real graph store** — ✅ **Done (swap #2, D15).** `GraphitiMemoryStore` over graphiti-core on
+   Neo4j (`docker compose up -d`); Kuzu was retired before adoption (deprecated upstream — D15).
+   11 gated tests prove fake/real parity; `--graph` on the demo runs the full real stack and
+   shows the run's nodes/edges in Neo4j.
+3. **JIRA `ToolAdapter`** ← **DO THIS NEXT** — direct API (`httpx`) → `TicketInput`. This is the
+   only tool needed to reach the hypothesis gate (D6).
 4. **OTel → Langfuse** — instrument each `ModelClient.complete` call; the `Usage` field on
    `ModelResponse` is already there to feed token metrics (FR10).
 
@@ -198,14 +215,14 @@ Then Stage 3 (the gate): a frozen, externally-authored scenario set + a senior a
 accept/revise/reject verdict (D7). **Open decision OD3** — where the architect records verdicts —
 must be resolved here. Build nothing below the gate until acceptance ≥70% / reject <10% holds.
 
-**Start here:** read `DECISIONS.md` (D1–D14), run the live demo
-(`uv run --extra live python scripts/live_demo.py`) to watch the real loop, then pick up
-integration step **#2** (GraphitiMemoryStore) — the last big swap before the Stage-3 gate.
+**Start here:** read `DECISIONS.md` (D1–D15), run the full real stack
+(`docker compose up -d && uv run --extra live --extra graph python scripts/live_demo.py --graph`),
+then pick up integration step **#3** (JIRA ToolAdapter) — the last piece before the Stage-3 gate.
 
 ## Roadmap (build in dependency order, no calendar)
 
 1. **Stage 1 — substrate** ✅ artifacts, event log, FSM
-2. **Stage 2 — the core loop** 🟡 BA/SA agents + FSM negotiation + model/memory seams done; **real-model loop runs end-to-end (swaps #1 + #1.5 ✅, see `scripts/live_demo.py`)**; Graphiti backend, JIRA adapter, and OTel pending (see [Continuing this work](#continuing-this-work-handoff))
+2. **Stage 2 — the core loop** 🟡 BA/SA agents + FSM negotiation done; **full real stack runs — real models + real Graphiti/Neo4j graph (swaps #1, #1.5, #2 ✅, see `scripts/live_demo.py --graph`)**; JIRA adapter and OTel pending (see [Continuing this work](#continuing-this-work-handoff))
 3. **Stage 3 — make it visible, then judge it** ← **HYPOTHESIS GATE**: OTel→Langfuse, example tickets, architect verdict, advisory eval + κ. *If it fails here, fix retrieval/prompts before building anything below.*
 4. **Stage 4 — breadth**: Confluence / Notion / Miro ingestion
 5. **Stage 5 — properties & robustness**: conflict resolution, replay verification, V2 interface stubs, honest demo

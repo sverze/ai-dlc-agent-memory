@@ -6,6 +6,9 @@ The quantifiable input/output surface of the prototype, in one command:
     uv run --extra live python scripts/live_demo.py "your ticket text here"
     uv run --extra live python scripts/live_demo.py --runs 5   # reliability/cost table
 
+    # FULL REAL STACK — real models + real Graphiti graph (docker compose up -d first):
+    uv run --extra live --extra graph python scripts/live_demo.py --graph
+
 Prints: the input ticket, the BA's extracted RequirementsArtifact, the FSM path
 from the event log, the SA's ADR with requirement traces, the structural omission
 check, and real token usage per model call (the raw material of the token-efficiency
@@ -20,12 +23,14 @@ from __future__ import annotations
 import sys
 import tempfile
 import time
+import uuid as uuid_mod
 from collections.abc import Sequence
 from pathlib import Path
 
 from pydantic import ValidationError
 
 from agentic_memory import (
+    DEFAULT_GROUP,
     AgentPersona,
     BAAgent,
     EventLog,
@@ -76,11 +81,25 @@ class UsageRecorder(ModelClient):
         return resp
 
 
-def _run_once(ticket: TicketInput, *, verbose: bool) -> dict:
+def _run_once(
+    ticket: TicketInput,
+    *,
+    verbose: bool,
+    use_graph: bool = False,
+    ba_model: str | None = None,
+) -> dict:
     """One full loop run; returns measurable outcomes. Prints detail if verbose."""
     log_path = Path(tempfile.mkdtemp()) / "events.jsonl"
-    client = UsageRecorder(make_model_client())
-    store = InMemoryMemoryStore()
+    override = {AgentPersona.BUSINESS_ANALYST: ba_model} if ba_model else None
+    client = UsageRecorder(make_model_client(model_by_role=override))
+    if use_graph:
+        from agentic_memory import GraphitiMemoryStore  # needs the `graph` extra
+
+        group = f"demo-{uuid_mod.uuid4().hex[:8]}"  # per-run namespace (OC3/D10)
+        store: InMemoryMemoryStore | GraphitiMemoryStore = GraphitiMemoryStore()
+    else:
+        group = DEFAULT_GROUP
+        store = InMemoryMemoryStore()
     ba, sa = BAAgent(client, store), SAAgent(client, store)
     fsm = FSM(EventLog(log_path))
 
@@ -90,7 +109,7 @@ def _run_once(ticket: TicketInput, *, verbose: bool) -> dict:
         result = None
         for attempt in range(4):  # transient provider 5xx happen; retry a few times
             try:
-                result = run_loop(ticket, ba=ba, sa=sa, fsm=fsm)
+                result = run_loop(ticket, ba=ba, sa=sa, fsm=fsm, group_id=group)
                 break
             except Exception as exc:
                 if any(s in str(exc) for s in ("503", "UNAVAILABLE", "overload")):
@@ -193,6 +212,25 @@ def _run_once(ticket: TicketInput, *, verbose: bool) -> dict:
           f"out={stats['tokens_out']}  all={stats['tokens_in'] + stats['tokens_out']} tokens"
           f"   wall={stats['wall_s']:.1f}s")
     print(f"  event log: {log_path}")
+
+    if use_graph:
+        # Independent evidence straight from Neo4j (raw Cypher, not our mapping):
+        records, _, _ = store._run(  # type: ignore[union-attr]
+            store._driver.execute_query(  # type: ignore[union-attr]
+                "MATCH (n:Entity {group_id: $g}) "
+                "OPTIONAL MATCH (n)-[r:RELATES_TO {group_id: $g}]->() "
+                "RETURN count(DISTINCT n) AS nodes, count(DISTINCT r) AS edges",
+                g=group,
+            )
+        )
+        print()
+        print("═" * 72)
+        print("🕸️  IN THE GRAPH — raw Cypher count from Neo4j (independent of our code)")
+        print("═" * 72)
+        print(f"  group_id: {group}")
+        print(f"  nodes: {records[0]['nodes']}   edges: {records[0]['edges']}")
+        print("  inspect in the browser: http://localhost:7474 →")
+        print(f"    MATCH (n:Entity {{group_id: '{group}'}})-[r]-(m) RETURN n, r, m")
     return stats
 
 
@@ -202,6 +240,14 @@ def main() -> int:
     if "--runs" in args:
         i = args.index("--runs")
         runs = max(1, int(args[i + 1]))
+        del args[i : i + 2]
+    use_graph = "--graph" in args
+    if use_graph:
+        args.remove("--graph")
+    ba_model = None
+    if "--ba-model" in args:  # e.g. --ba-model gemini-2.5-flash-lite (per-model quotas)
+        i = args.index("--ba-model")
+        ba_model = args[i + 1]
         del args[i : i + 2]
     body = args[0] if args else DEFAULT_TICKET
     ticket = TicketInput(id="DEMO-1", body=body)
@@ -216,7 +262,10 @@ def main() -> int:
     for n in range(runs):
         if runs > 1:
             print(f"\n--- run {n + 1}/{runs} ---")
-        results.append(_run_once(ticket, verbose=(n == 0)))
+        r = _run_once(ticket, verbose=(n == 0), use_graph=use_graph, ba_model=ba_model)
+        if not r.get("ok"):
+            print(f"  ❌ run {n + 1} failed: {r.get('error')}")
+        results.append(r)
 
     if runs > 1:
         ok = [r for r in results if r.get("ok")]

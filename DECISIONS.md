@@ -243,9 +243,58 @@ Stage-3 gate measures (D7) observable *now* rather than after Graphiti/JIRA land
 
 ---
 
+## D15 — GraphitiMemoryStore: Neo4j everywhere; Kuzu retired before adoption ✅ (resolves OD2, swap #2)
+
+**Decision.** The real L4 store is `GraphitiMemoryStore` (`graphiti_store.py`), implementing the
+seam's six primitives over graphiti-core `EntityNode`/`EntityEdge` against **Neo4j only**
+(`docker-compose.yml`, browser at :7474). D10/OC2's "Kuzu for local dev" is **retired before it
+was ever adopted**: pinning against the real library (graphiti-core 0.29) surfaced a deprecation —
+upstream Kuzu is unmaintained and graphiti will remove the backend. One backend everywhere beats
+an embedded one on life support. (FalkorDB is graphiti's other supported option if Docker-free
+local dev ever matters.)
+
+**Mapping (all proven empirically before design freeze, then by 11 gated tests):**
+- uuid = `{group_id}:{id}` — graphiti uuids are global PKs, our ids are per-group (the fake keys
+  on `(group_id, id)`); the composite preserves both contracts.
+- our `attrs` dict rides one `attrs_json` string property (Neo4j properties can't nest); node
+  type / author / canonical are flat attributes; domain id round-trips via `node_id`.
+- **Placeholder embeddings `[0.0]`** on nodes and edges — graphiti's Neo4j save unconditionally
+  calls `db.create.setNodeVectorProperty`/`setRelationshipVectorProperty`, which NPE on null
+  (its pipeline assumes an embedder ran). V1 does no semantic search (D10), so a deterministic
+  placeholder satisfies the contract; V2's real embedder overwrites.
+- **One event loop per store** (daemon thread, `run_coroutine_threadsafe`) — the neo4j async
+  driver binds its pool to the first loop, so per-call `asyncio.run` fails with "Future attached
+  to a different loop".
+- No LLM client is constructed anywhere in the store (D10 structured-first holds).
+
+**Proof.** `pytest -m graph` (11 tests vs dockerized Neo4j) mirrors the fake's behaviors —
+including omission-metric parity fake-vs-real. The **full real stack** ran end-to-end:
+`scripts/live_demo.py --graph` → real models + real graph, terminal state, 0 omissions,
+18 nodes / 19 edges verified by raw Cypher under a per-run `group_id` (OC3 honored).
+
+**Operational note (quota).** Gemini free tier is **20 requests/day/model**
+(`GenerateRequestsPerDayPerProjectPerModel-FreeTier`). When `gemini-2.5-flash` is spent,
+`make_model_client(model_by_role=...)` / the demo's `--ba-model gemini-2.5-flash-lite` swaps the
+BA to a separate quota bucket without touching the D8 defaults. **A 429 from the demo means
+quota, not regression.**
+
+**Honest limits (for the next engineer).**
+- **`retrieve()` is client-side.** It is the seam ABC's shared naive substring scan over
+  `nodes()` — Neo4j hydrates the nodes, Python does the matching. Real graph-native retrieval
+  (Graphiti semantic+keyword search, requiring real embeddings) is V2; the Stage-3 memory-hit-rate
+  metric must be read with that scope in mind, not overclaimed as semantic retrieval.
+- **No vector index exists** in the compose Neo4j; placeholder `[0.0]` embeddings are inert. If
+  V2 adds Graphiti search, embeddings must be regenerated with a real embedder and dimensions
+  made consistent before any vector index is created.
+- The store's uuid namespace delimiter is `:` — group_ids containing a colon are rejected
+  (`_uuid` guard) to prevent cross-group uuid collisions.
+- `GraphitiMemoryStore.close()` releases the driver and stops the store's event loop; per-call
+  timeout is 60s. The loop thread is a daemon, so process exit without `close()` is safe but
+  unclean.
+
+---
+
 ## Open decisions
 
-- **OD2 — Graph backend** — *partially resolved by D10/OC2* (Kuzu local, Neo4j shared);
-  confirm once `graphiti-core` backend support is verified against the real library.
 - **OD3 — Architect verdict capture.** Langfuse annotations vs. a separate review sheet
   feeding the eval log. (PRD §15 Q4 — resolve at Stage 3.)

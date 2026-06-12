@@ -9,6 +9,9 @@ dependencies = ["pydantic>=2.6"]
 # Real provider SDKs — only needed to run against live models. The offline path
 # (FakeModelClient + the full default test suite) imports without these.
 live = ["anthropic>=0.40", "google-genai>=1.0"]
+# Real temporal graph (L4) — Graphiti over Kuzu (embedded, local dev) or Neo4j
+# (shared/demo via docker-compose). Offline path never needs these (D11).
+graph = ["graphiti-core[kuzu]>=0.29"]
 
 [dependency-groups]
 dev = ["pytest>=8"]
@@ -23,8 +26,9 @@ packages = ["src/agentic_memory"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
-# Default run stays offline and free: live tests opt in with `-m live`.
-addopts = "-q -m 'not live'"
+# Default run stays offline and free: live/graph tests opt in with `-m live` / `-m graph`.
+addopts = "-q -m 'not live and not graph'"
 markers = [
     "live: hits a real provider API (needs keys, costs money); excluded by default",
+    "graph: needs a running Neo4j (docker compose up -d); excluded by default",
 ]

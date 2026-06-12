@@ -36,6 +36,7 @@ from .graph import (
     MemoryStore,
     NodeType,
 )
+from .graphiti_store import GraphitiMemoryStore, make_memory_store
 from .models import (
     DEFAULT_MODEL_BY_ROLE,
     AnthropicModelClient,
@@ -93,9 +94,11 @@ __all__ = [
     "EdgeType",
     "GraphEdge",
     "GraphNode",
+    "GraphitiMemoryStore",
     "InMemoryMemoryStore",
     "MemoryStore",
     "NodeType",
+    "make_memory_store",
     # models
     "DEFAULT_MODEL_BY_ROLE",
     "AnthropicModelClient",

@@ -407,17 +407,30 @@ class RoutingModelClient(ModelClient):
 
 
 def make_model_client(
-    *, anthropic_key: str | None = None, gemini_key: str | None = None
+    *,
+    anthropic_key: str | None = None,
+    gemini_key: str | None = None,
+    model_by_role: dict[AgentPersona, str] | None = None,
 ) -> ModelClient:
     """Build the real persona-routing client: BA → Gemini, SA → Anthropic.
 
     Reads keys from the environment unless passed explicitly. Raises a clear
     ``RuntimeError`` (via the sub-clients) if a required key is missing — the
     drop-in replacement for ``FakeModelClient()`` in a real run.
+
+    ``model_by_role`` overrides the D8 defaults per persona (merged, so a partial
+    override keeps the other role's binding) — useful when a free-tier per-model
+    daily quota is exhausted (e.g. swap the BA to ``gemini-2.5-flash-lite``, which
+    draws from a separate quota bucket).
     """
+    merged = {**DEFAULT_MODEL_BY_ROLE, **(model_by_role or {})}
     return RoutingModelClient(
         {
-            AgentPersona.BUSINESS_ANALYST: GeminiModelClient(api_key=gemini_key),
-            AgentPersona.SOLUTION_ARCHITECT: AnthropicModelClient(api_key=anthropic_key),
+            AgentPersona.BUSINESS_ANALYST: GeminiModelClient(
+                api_key=gemini_key, model_by_role=merged
+            ),
+            AgentPersona.SOLUTION_ARCHITECT: AnthropicModelClient(
+                api_key=anthropic_key, model_by_role=merged
+            ),
         }
     )
