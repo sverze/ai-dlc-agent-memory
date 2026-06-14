@@ -9,8 +9,9 @@ The quantifiable input/output surface of the prototype, in one command:
     # FULL REAL STACK — real models + real Graphiti graph (docker compose up -d first):
     uv run --extra live --extra graph python scripts/live_demo.py --graph
 
-    # COMPLETE PIPELINE — pull the ticket from real JIRA too (needs ATLASSIAN_* env):
-    uv run --extra live --extra graph --extra jira python scripts/live_demo.py --graph --jira SCRUM-1
+    # COMPLETE PIPELINE — pull from JIRA, publish back (requirements comment + Confluence ADR):
+    uv run --extra live --extra graph --extra jira python scripts/live_demo.py \
+        --graph --jira SCRUM-1 --publish
 
 Prints: the input ticket, the BA's extracted RequirementsArtifact, the FSM path
 from the event log, the SA's ADR with requirement traces, the structural omission
@@ -90,6 +91,7 @@ def _run_once(
     verbose: bool,
     use_graph: bool = False,
     ba_model: str | None = None,
+    publish: bool = False,
 ) -> dict:
     """One full loop run; returns measurable outcomes. Prints detail if verbose."""
     log_path = Path(tempfile.mkdtemp()) / "events.jsonl"
@@ -234,6 +236,22 @@ def _run_once(
         print(f"  nodes: {records[0]['nodes']}   edges: {records[0]['edges']}")
         print("  inspect in the browser: http://localhost:7474 →")
         print(f"    MATCH (n:Entity {{group_id: '{group}'}})-[r]-(m) RETURN n, r, m")
+
+    if publish:
+        from agentic_memory import make_publisher  # needs the `jira` extra + ATLASSIAN_* env
+
+        pub = make_publisher()
+        print()
+        print("═" * 72)
+        print("📨 PUBLISHED — the human-review surface (additive writes)")
+        print("═" * 72)
+        comment_ref = pub.publish_requirements(art, ticket_key=ticket.id)
+        print(f"  requirements → JIRA comment on {ticket.id}  (id {comment_ref})")
+        if result.adr:
+            page_url = pub.publish_adr(result.adr, art, ticket_key=ticket.id)
+            print(f"  ADR → Confluence page: {page_url}")
+            print(f"  (+ back-link comment on {ticket.id})")
+        print("  the architect now reviews the ADR page against the requirements ✦")
     return stats
 
 
@@ -257,6 +275,9 @@ def main() -> int:
         i = args.index("--jira")
         jira_key = args[i + 1]
         del args[i : i + 2]
+    publish = "--publish" in args  # write results back to JIRA/Confluence (pair with --jira)
+    if publish:
+        args.remove("--publish")
 
     if jira_key:
         from agentic_memory import JiraTicketSource  # needs the `jira` extra
@@ -275,7 +296,8 @@ def main() -> int:
     for n in range(runs):
         if runs > 1:
             print(f"\n--- run {n + 1}/{runs} ---")
-        r = _run_once(ticket, verbose=(n == 0), use_graph=use_graph, ba_model=ba_model)
+        r = _run_once(ticket, verbose=(n == 0), use_graph=use_graph, ba_model=ba_model,
+                      publish=publish)
         if not r.get("ok"):
             print(f"  ❌ run {n + 1} failed: {r.get('error')}")
         results.append(r)

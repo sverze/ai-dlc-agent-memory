@@ -38,6 +38,15 @@ from .graph import (
 )
 from .graphiti_store import GraphitiMemoryStore, make_memory_store
 from .tickets import InMemoryTicketSource, JiraTicketSource, TicketSource, adf_to_text
+from .publish import (
+    AtlassianPublisher,
+    InMemoryPublisher,
+    Publisher,
+    adr_page_title,
+    make_publisher,
+    render_adr_html,
+    render_requirements_adf,
+)
 from .models import (
     DEFAULT_MODEL_BY_ROLE,
     AnthropicModelClient,
@@ -95,6 +104,14 @@ __all__ = [
     "JiraTicketSource",
     "TicketSource",
     "adf_to_text",
+    # publish (human-review surface)
+    "AtlassianPublisher",
+    "InMemoryPublisher",
+    "Publisher",
+    "adr_page_title",
+    "make_publisher",
+    "render_adr_html",
+    "render_requirements_adf",
     # graph (L4 shared memory)
     "DEFAULT_GROUP",
     "EdgeType",

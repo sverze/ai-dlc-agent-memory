@@ -78,6 +78,7 @@ in both — that's decision D11, and the gated parity tests prove it holds.
 | `src/agentic_memory/graph.py` | L4 `MemoryStore` seam over Graphiti: node/edge types from our artifacts (D10), domain writes (`write_requirements`/`write_adr`), and omission + key-fact queries. Offline `InMemoryMemoryStore` fake. | ✅ Done |
 | `src/agentic_memory/graphiti_store.py` | **Real `GraphitiMemoryStore`** — the six seam primitives over graphiti-core EntityNode/EntityEdge on Neo4j (D15): namespaced uuids, lossless `attrs_json`, one event loop per store. 11 gated tests prove fake/real parity. | ✅ Done (swap #2) |
 | `src/agentic_memory/tickets.py` | `TicketSource` seam (D6/D16): `InMemoryTicketSource` fake + **real `JiraTicketSource`** (REST v3, basic auth, deterministic ADF→text flattening, mapped errors, `jira` extra). | ✅ Done (swap #3) |
+| `src/agentic_memory/publish.py` | `Publisher` seam (D17/FR8): pure ADF/XHTML renderers + `InMemoryPublisher` fake + **`AtlassianPublisher`** — BA requirements → JIRA comment, SA ADR → Confluence page (traceability table + verdict + Miro slot) + ticket back-link. | ✅ Done (review surface) |
 | `src/agentic_memory/agents.py` | `BAAgent` (ticket → `RequirementsArtifact` → memory) and `SAAgent` (memory → `ADR` or clarifications), both over the `ModelClient` + `MemoryStore` seams; prompts carry type-derived JSON schemas (D14). | ✅ Done |
 | `src/agentic_memory/loop.py` | `run_loop` — drives the FSM through `intake → analysis ⇄ clarification → decision (+ escalation)`; the full BA→SA roundtrip, logged and replayable; proven on the full real stack. | ✅ Done |
 
@@ -123,13 +124,22 @@ docker compose up -d                                          # Neo4j on :7687 /
 uv run --extra graph python -m pytest -m graph -v             # 11 fake/real parity tests
 ```
 
-To pull **real JIRA tickets** you need the `jira` extra and three env vars
-(`ATLASSIAN_URL`, `ATLASSIAN_EMAIL`, `ATLASSIAN_API_TOKEN` — see `.env.example`):
+To pull **real JIRA tickets** (and write results back), you need the `jira` extra and the
+`ATLASSIAN_*` env vars (see `.env.example`):
 
 ```bash
-uv run --extra jira python -m pytest -m jira -v   # mocked-transport tests + env-gated live fetch
-uv run --extra live --extra graph --extra jira python scripts/live_demo.py --graph --jira SCRUM-1
+uv run --extra jira python -m pytest -m jira -v   # mocked-transport tests + env-gated live fetch/publish
+# complete pipeline: pull from JIRA → run → publish back (requirements comment + Confluence ADR page):
+uv run --extra live --extra graph --extra jira python scripts/live_demo.py --graph --jira SCRUM-1 --publish
 ```
+
+**What a human sees (the review surface, D17).** `--publish` writes back additively: the BA's
+requirements become a **comment on the source ticket**, and the SA's ADR becomes a **Confluence
+page** (linked from the ticket) leading with the decision and the **requirement-traceability
+table** — the join an architect reviews — plus a Miro-diagram placeholder and an "Architect
+verdict" section. No one needs Neo4j or a terminal: they open the ticket, follow the link, judge
+the ADR. Needs Confluence enabled on the site; set `CONFLUENCE_SPACE_KEY` to target a space
+(otherwise the first space is used — the printed page URL shows which).
 
 **Neo4j console:** http://localhost:7474 — username `neo4j`, password `devpassword`
 (the docker-compose local-dev default; override via `NEO4J_AUTH` + `NEO4J_PASSWORD` for
@@ -171,13 +181,14 @@ assert replay_final_state(log) is fsm.state   # the log replays to identical sta
 │   ├── graph.py             # MemoryStore seam + InMemoryMemoryStore fake
 │   ├── graphiti_store.py    # real GraphitiMemoryStore over Neo4j ✅ (D15)
 │   ├── tickets.py           # TicketSource seam + real JiraTicketSource ✅ (D16)
+│   ├── publish.py           # Publisher seam: requirements→JIRA comment, ADR→Confluence ✅ (D17)
 │   ├── agents.py            # BAAgent / SAAgent (schema-in-prompt, D14)
 │   └── loop.py              # run_loop — the FSM-driven roundtrip
 ├── scripts/live_demo.py     # one command: ticket → ADR + token usage (+ --graph, --jira, --runs)
 ├── docker-compose.yml       # Neo4j for the real graph store
 ├── tests/                   # pytest suite (43 offline + gated live/graph)
 ├── Plans/                   # design proposals (e.g. graphiti-entity-edge-model.md → D10)
-├── DECISIONS.md             # durable decision log (D1–D15) — read this first
+├── DECISIONS.md             # durable decision log (D1–D17) — read this first
 ├── .env.example             # setup template (spec Appendix A.2)
 ├── pyproject.toml           # uv project; pytest config
 ├── uv.lock                  # pinned deps (committed — NFR6 reproducibility)
@@ -238,7 +249,7 @@ Then Stage 3 (the gate): a frozen, externally-authored scenario set + a senior a
 accept/revise/reject verdict (D7). **Open decision OD3** — where the architect records verdicts —
 must be resolved here. Build nothing below the gate until acceptance ≥70% / reject <10% holds.
 
-**Start here:** read `DECISIONS.md` (D1–D15), run the full real stack
+**Start here:** read `DECISIONS.md` (D1–D17), run the full real stack
 (`docker compose up -d && uv run --extra live --extra graph python scripts/live_demo.py --graph`),
 then pick up integration step **#3** (JIRA ToolAdapter) — the last piece before the Stage-3 gate.
 

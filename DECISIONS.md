@@ -317,7 +317,43 @@ the complete pipeline real — JIRA → BA → graph → SA → ADR.
 
 ---
 
+## D17 — Human-review surface: requirements → JIRA comment, ADR → Confluence page ✅ (FR8/US4)
+
+**Decision.** Agent output reaches the human reviewer through a `Publisher` seam (`publish.py`):
+`InMemoryPublisher` (offline fake) and `AtlassianPublisher` (real). The BA's requirements are
+posted as a **structured comment** on the source ticket (ADF — table of requirements + ACs/key
+facts/open questions); the SA's ADR is published as a **Confluence page** (storage XHTML) with a
+**back-link comment** on the ticket. One httpx client serves both products (same site/auth; paths
+`/rest/api/3/...` vs `/wiki/api/v2/...`). Confluence space resolves from `CONFLUENCE_SPACE_KEY` or
+auto-discovery (the printed page URL reveals which space, so a wrong pick is visible).
+
+**Why this shape (user's call).** Comment over sub-tasks/new-issue: additive, reversible, doesn't
+reshape anyone's board. Confluence over a JIRA comment for the ADR: an ADR is a real document and
+Confluence is its natural home — and the room where an embedded **Miro** diagram will live (reserved
+"Diagrams" section now; wired in a later swap).
+
+**The review hero.** The ADR page embeds the **requirement-traceability table** (each requirement id
+→ addressed/deferred → how/why), because that join is exactly what the architect is paid to verify
+(ApertureOscillation surfaced that a comment-here/page-there split would force them to re-join it
+mentally — the page must be self-sufficient). The page ends with an **"Architect verdict"** section
+so review is *possible today*; the verdict-capture mechanism itself stays OD3 / Stage 3.
+
+**Design.** Renderers are pure functions building ADF/XHTML directly from the typed artifacts (no
+markdown hop); storage XHTML uses only the 5 XML entities (named entities like `&nbsp;` are rejected
+by Confluence — tested). Writes are additive only; no LLM in the publisher. Page titles are
+timestamped so a **re-run coexists** rather than 409-ing on a duplicate title (and 409 is mapped to a
+clear error as backstop). Token never logged; 401/403/404/409 mapped.
+
+**Honest limits.** No idempotency/dedup — a re-run posts a fresh comment and a fresh (timestamped)
+page; versioning is V2. Auto space-discovery picks the first space if `CONFLUENCE_SPACE_KEY` is
+unset — fine for a single-space personal site, set the key explicitly for anything shared. Live
+publish requires Confluence enabled on the site; if it isn't, the requirements comment still works
+and the ADR step reports a clear "enable Confluence / set a space" error.
+
+---
+
 ## Open decisions
 
 - **OD3 — Architect verdict capture.** Langfuse annotations vs. a separate review sheet
-  feeding the eval log. (PRD §15 Q4 — resolve at Stage 3.)
+  feeding the eval log. The ADR page now carries a verdict *section* (D17); what remains is the
+  *capture* path that feeds the κ/accept-rate metrics. (PRD §15 Q4 — resolve at Stage 3.)
