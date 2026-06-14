@@ -40,32 +40,35 @@ are *advisory* and always measured against the human verdict — never used to o
 
 ## Development status
 
-> **Checkpoint (2026-06-12) — the FULL REAL STACK runs.** Swap #1 (real `ModelClient`),
-> swap #1.5 (schema-in-prompt, D14), and **swap #2 (real Graphiti graph over Neo4j, D15)**
-> are done. One command runs a real ticket through real models into a **real temporal graph**:
+> **Checkpoint (2026-06-15) — the full round-trip is live-verified.** Every integration swap is
+> done and proven against real services: a real JIRA ticket → real Gemini (requirements) → real
+> Graphiti/Neo4j graph → real Claude (ADR) → **written back as a JIRA comment + a Confluence ADR
+> page** (D17). Confirmed end-to-end against a real Atlassian site. One command runs the whole thing:
 >
 > ```bash
 > docker compose up -d                              # Neo4j (browser: http://localhost:7474)
-> uv run --extra live --extra graph python scripts/live_demo.py --graph
+> uv run --extra live --extra graph --extra jira python scripts/live_demo.py \
+>     --graph --jira <YOUR-TICKET-KEY> --publish
 > ```
 >
-> The demo prints requirements, ADR with traces, omission check, token usage — and a raw
-> Cypher count of the nodes/edges the run left in Neo4j (reference: 18 nodes / 19 edges,
-> per-run `group_id`). Remaining for Stage 2: the JIRA tool (swap #3), OTel (swap #4).
+> **Stage 2 (the core loop) is functionally complete.** What's left is **Stage 3 — the hypothesis
+> gate**: judge whether the ADRs are actually good enough (a senior architect accepting ≥70%). See
+> [Continuing this work](#continuing-this-work-handoff).
 
 | Stage | Scope | State |
 |-------|-------|-------|
 | **1 — Substrate** | typed artifacts, append-only event log, deterministic FSM | ✅ **Complete** |
-| **2 — Core loop** | BA/SA agents, L4 memory, FSM negotiation, model seam | 🟡 **Full real stack runs (swaps #1, #1.5, #2 ✅); JIRA adapter built (#3 ✅); OTel pending** |
-| 3 — Make it visible, then judge it ← **HYPOTHESIS GATE** | OTel→Langfuse, frozen scenarios, architect verdict, advisory eval + κ | ⬜ Not started |
+| **2 — Core loop** | BA/SA agents, L4 memory, FSM negotiation, model + memory + JIRA + publish seams | ✅ **Complete & live-verified** (swaps #1, #1.5, #2, #3, D17) |
+| 3 — Make it visible, then judge it ← **HYPOTHESIS GATE** | OTel→Langfuse, frozen scenarios, architect verdict capture, advisory eval + κ | ⬜ **Next** |
 | 4 — Breadth | Confluence / Notion / Miro ingestion | ⬜ Not started |
 | 5 — Properties & robustness | conflict resolution, replay verification, V2 stubs, demo | ⬜ Not started |
 
-**Two ways to run everything:** the **offline path** (default — `FakeModelClient` +
-`InMemoryMemoryStore`, zero keys/services/spend, 43 deterministic tests) and the **real path**
-(`make_model_client()` + `GraphitiMemoryStore`, gated behind the `live`/`graph` extras). Both
-sit behind the same seams (`ModelClient`, `MemoryStore`), so agent and loop code is identical
-in both — that's decision D11, and the gated parity tests prove it holds.
+**Two ways to run everything:** the **offline path** (default — `FakeModelClient`,
+`InMemoryMemoryStore`, `InMemoryTicketSource`, `InMemoryPublisher`; zero keys/services/spend,
+62 deterministic tests) and the **real path** (real model clients, Graphiti/Neo4j, JIRA, and
+Atlassian publisher, gated behind the `live`/`graph`/`jira` extras). Both sit behind the same
+seams (`ModelClient`, `MemoryStore`, `TicketSource`, `Publisher`), so agent and loop code is
+identical in both — that's decision D11, and the gated parity tests prove it holds.
 
 ### Modules
 
@@ -223,41 +226,46 @@ LiteLLM routing, more personas (Security/QA/Ops), second-tier tools, Figma.
 
 ## Continuing this work (handoff)
 
-The architecture is **fakes behind interfaces** (decision D11): every external boundary has a
-deterministic fake so the loop is testable offline, and going live means implementing the same
-interface with a real backend. The remaining Stage-2 work is exactly those swaps — none require
-touching `agents.py` or `loop.py`:
+The architecture is **fakes behind interfaces** (D11): every external boundary has a deterministic
+fake so the loop runs offline, and going live = implementing the same interface with a real backend.
+**All four integration swaps are done and live-verified** — none touched `agents.py` / `loop.py`:
 
-1. **Real model clients** — ✅ **Done (swap #1, D13).** `AnthropicModelClient` / `GeminiModelClient` /
-   `make_model_client()` in `models.py`, behind the `live` extra; seam proven by the live smoke
-   tests. Swap `FakeModelClient()` → `make_model_client()` and the same `run_loop` drives real models.
-   **Swap #1.5 also done (D14):** prompts carry the artifact JSON schemas derived from the Pydantic
-   classes (`_schema_block` in `agents.py`), so the real loop completes —
-   `test_live_loop_reaches_terminal` passes and `scripts/live_demo.py` shows the whole run.
-2. **Real graph store** — ✅ **Done (swap #2, D15).** `GraphitiMemoryStore` over graphiti-core on
-   Neo4j (`docker compose up -d`); Kuzu was retired before adoption (deprecated upstream — D15).
-   11 gated tests prove fake/real parity; `--graph` on the demo runs the full real stack and
-   shows the run's nodes/edges in Neo4j.
-3. **JIRA `ToolAdapter`** — ✅ **Built (swap #3, D16).** `TicketSource` seam in `tickets.py`:
-   offline fake + `JiraTicketSource` (REST v3, ADF→text, `jira` extra). Demo `--jira KEY`
-   runs the complete pipeline JIRA → BA → graph → SA → ADR. Set `ATLASSIAN_URL` /
-   `ATLASSIAN_EMAIL` / `ATLASSIAN_API_TOKEN`; the personal→work switch is env-only.
-4. **OTel → Langfuse** ← **DO THIS NEXT** — instrument each `ModelClient.complete` call; the
-   `Usage` field on `ModelResponse` is already there to feed token metrics (FR10).
+1. **Real model clients** — ✅ swap #1/#1.5 (D13/D14): `make_model_client()` (Anthropic + Gemini), schema-in-prompt so real models conform.
+2. **Real graph store** — ✅ swap #2 (D15): `GraphitiMemoryStore` over Neo4j; 11 parity tests; `--graph`.
+3. **JIRA in** — ✅ swap #3 (D16): `JiraTicketSource` pulls real tickets; `--jira KEY`.
+4. **Publish out** — ✅ D17: `AtlassianPublisher` — requirements → JIRA comment, ADR → Confluence page; `--publish`.
 
-Then Stage 3 (the gate): a frozen, externally-authored scenario set + a senior architect's
-accept/revise/reject verdict (D7). **Open decision OD3** — where the architect records verdicts —
-must be resolved here. Build nothing below the gate until acceptance ≥70% / reject <10% holds.
+### What's next — Stage 3, the hypothesis gate
 
-**Start here:** read `DECISIONS.md` (D1–D17), run the full real stack
-(`docker compose up -d && uv run --extra live --extra graph python scripts/live_demo.py --graph`),
-then pick up integration step **#3** (JIRA ToolAdapter) — the last piece before the Stage-3 gate.
+This is the **go/no-go**: does the loop produce ADRs a senior architect actually accepts (≥70% accept,
+<10% reject, D7)? The machine is built; now we measure it. Four pieces, in rough order:
+
+1. **OTel → Langfuse instrumentation.** Wrap each `ModelClient.complete` (the `Usage` field already
+   carries tokens, FR10); trace each run so quality work has data. Self-hosted Langfuse via compose.
+2. **A frozen scenario set.** A handful of anonymized, externally-authored delivery tickets in JIRA —
+   the fixed input the gate judges against (D9). Not author-it-yourself; the credibility is in it being external.
+3. **Architect verdict capture (resolve OD3).** The ADR page already has a verdict *section* (D17);
+   what's missing is the *capture path* that turns accept/revise/reject + notes into the κ/accept-rate
+   data — a Confluence label/macro, a review sheet, or a small form. Pick one (OD3).
+4. **Advisory eval harness.** Traceability + omission/grounding scorers (the graph already answers
+   omission), an LLM judge, and judge-vs-human κ (≥0.6 before the judge is trusted at all). All
+   *advisory* — the human verdict is never overridden (NFR4).
+
+**Also queued (not gating):** Miro diagrams in the ADR (the reserved "Diagrams" section, D17).
+
+**Only if the gate passes:** Stage 4 (Confluence/Notion/Miro *ingestion* for breadth) and Stage 5
+(conflict resolution, replay verification, V2 interface stubs, honest demo). **Build nothing below
+the gate until it holds** (D7).
+
+**Start here:** read `DECISIONS.md` (D1–D17), run the full round-trip
+(`docker compose up -d && uv run --extra live --extra graph --extra jira python scripts/live_demo.py --graph --jira <KEY> --publish`),
+then pick up Stage 3 step **#1** (Langfuse instrumentation) or **#3** (verdict capture, OD3).
 
 ## Roadmap (build in dependency order, no calendar)
 
 1. **Stage 1 — substrate** ✅ artifacts, event log, FSM
-2. **Stage 2 — the core loop** 🟡 BA/SA agents + FSM negotiation done; **full real stack runs — real models + real Graphiti/Neo4j graph (swaps #1, #1.5, #2 ✅, see `scripts/live_demo.py --graph`)**; JIRA adapter and OTel pending (see [Continuing this work](#continuing-this-work-handoff))
-3. **Stage 3 — make it visible, then judge it** ← **HYPOTHESIS GATE**: OTel→Langfuse, example tickets, architect verdict, advisory eval + κ. *If it fails here, fix retrieval/prompts before building anything below.*
+2. **Stage 2 — the core loop** ✅ **complete & live-verified** — BA/SA agents + FSM negotiation, and the full real round-trip: JIRA ticket → real models → Graphiti/Neo4j graph → JIRA comment + Confluence ADR page (swaps #1, #1.5, #2, #3, D17). Run it: `scripts/live_demo.py --graph --jira <KEY> --publish`
+3. **Stage 3 — make it visible, then judge it** ← **HYPOTHESIS GATE (next)**: OTel→Langfuse, a frozen external scenario set, architect verdict capture (OD3), advisory eval + κ. *If it fails here, fix retrieval/prompts before building anything below.*
 4. **Stage 4 — breadth**: Confluence / Notion / Miro ingestion
 5. **Stage 5 — properties & robustness**: conflict resolution, replay verification, V2 interface stubs, honest demo
 

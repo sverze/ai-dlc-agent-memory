@@ -350,6 +350,10 @@ unset — fine for a single-space personal site, set the key explicitly for anyt
 publish requires Confluence enabled on the site; if it isn't, the requirements comment still works
 and the ADR step reports a clear "enable Confluence / set a space" error.
 
+**Verified live 2026-06-15** — with Confluence enabled on the personal Atlassian site, the full
+round-trip ran end-to-end: requirements comment on the ticket and an ADR page in Confluence, both
+confirmed. Stage 2 is functionally complete; Stage 3 (the gate) is next.
+
 ---
 
 ## Open decisions
