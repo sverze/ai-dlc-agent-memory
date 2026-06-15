@@ -146,9 +146,10 @@ def _run_once(
         return stats
     finally:
         stats["wall_s"] = time.monotonic() - started
-        stats["tokens_in"] = sum(c[2] for c in client.calls)
-        stats["tokens_out"] = sum(c[3] for c in client.calls)
-        stats["calls"] = len(client.calls)
+        # usage lives on the recorder; with --trace `client` is the TracingModelClient wrapper.
+        stats["tokens_in"] = sum(c[2] for c in recorder.calls)
+        stats["tokens_out"] = sum(c[3] for c in recorder.calls)
+        stats["calls"] = len(recorder.calls)
 
     art = result.artifact
     assert art is not None
