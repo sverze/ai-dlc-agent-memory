@@ -27,6 +27,7 @@ observability = [
 [package.dev-dependencies]
 dev = [
     { name = "pytest" },
+    { name = "python-dotenv" },
 ]
 
 [package.metadata]
@@ -40,7 +41,10 @@ requires-dist = [
 ]
 
 [package.metadata.requires-dev]
-dev = [{ name = "pytest", specifier = ">=8" }]
+dev = [
+    { name = "pytest", specifier = ">=8" },
+    { name = "python-dotenv", specifier = ">=1" },
+]
 
 [[package]]
 name = "annotated-types"

@@ -279,7 +279,20 @@ def _run_once(
     return stats
 
 
+def _load_dotenv() -> None:
+    """Load a local .env (cwd/parents) so keys can live there, not just shell exports.
+
+    Existing shell exports win (override=False). No-op if python-dotenv isn't installed.
+    """
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    load_dotenv(override=False)
+
+
 def main() -> int:
+    _load_dotenv()
     args = sys.argv[1:]
     runs = 1
     if "--runs" in args:

@@ -114,6 +114,9 @@ uv sync
 uv run pytest
 ```
 
+**Credentials:** copy `.env.example` → `.env` and fill in the keys you need. The demo and the
+gated tests **auto-load `.env`** (via `python-dotenv`); shell `export`s still take precedence if set.
+
 To exercise the **real** model clients you need the `live` extra and provider keys
 (`ANTHROPIC_API_KEY`, `GEMINI_API_KEY` — see `.env.example`):
 
