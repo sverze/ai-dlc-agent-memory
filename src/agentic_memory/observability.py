@@ -53,6 +53,15 @@ class Tracer(ABC):
     def flush(self) -> None:
         """Force any buffered spans out (no-op unless overridden)."""
 
+    def verify(self) -> bool | None:
+        """Check the backend actually accepts our credentials.
+
+        Returns True/False for a real tracer, or None when there's nothing to verify
+        (NullTracer). Lets callers confirm delivery instead of assuming it — "sent"
+        without this is optimistic, because span export is async and faults are swallowed.
+        """
+        return None
+
 
 class _NullSpan(GenerationSpan):
     def complete(self, text: str, *, input_tokens: int = 0, output_tokens: int = 0) -> None:
@@ -134,6 +143,14 @@ class LangfuseTracer(Tracer):
             self._lf.flush()
         except Exception:
             pass
+
+    def verify(self) -> bool | None:
+        # auth_check validates the keys against the configured host — the single
+        # best signal for the classic "sent but empty UI" case (region/host/key mismatch).
+        try:
+            return bool(self._lf.auth_check())
+        except Exception:
+            return False
 
 
 def make_tracer() -> Tracer:

@@ -41,9 +41,10 @@ class _MockObservationCM:
 
 
 class MockLangfuse:
-    def __init__(self):
+    def __init__(self, auth=True):
         self.observations = []
         self.flushed = 0
+        self._auth = auth
 
     def start_as_current_observation(self, **kwargs):
         record = dict(kwargs)
@@ -52,6 +53,9 @@ class MockLangfuse:
 
     def flush(self):
         self.flushed += 1
+
+    def auth_check(self):
+        return self._auth
 
 
 def test_langfuse_tracer_emits_generation_with_model_and_usage():
@@ -77,3 +81,8 @@ def test_langfuse_tracer_emits_generation_with_model_and_usage():
     assert gen["usage_details"] == {"input": gen["usage_details"]["input"], "output": gen["usage_details"]["output"]}
     assert gen["usage_details"]["output"] >= 1
     assert mock.flushed == 1
+
+
+def test_verify_reflects_auth_check():
+    assert LangfuseTracer(client=MockLangfuse(auth=True)).verify() is True
+    assert LangfuseTracer(client=MockLangfuse(auth=False)).verify() is False

@@ -286,8 +286,17 @@ def _run_once(
             print(f"    visible now: {', '.join(seen) or 'none'}")
             print(f"    missing:     {', '.join(missing) or 'none'}")
         else:
-            print("  run + per-call generations sent (persona, model, tokens, latency).")
-            print("  open your Langfuse project → Traces → 'dlc-run:" + ticket.id + "'")
+            ok = tracer.verify()  # auth_check against the configured host
+            if ok:
+                print("  ✓ connection verified — run + per-call generations sent")
+                print("    (persona, model, tokens, latency).")
+                print(f"    open Langfuse → Tracing → Traces → 'dlc-run:{ticket.id}'")
+                print(f"    (host: {os.getenv('LANGFUSE_HOST')} — make sure the UI is the same project/region)")
+            else:
+                print("  ✗ keys present but Langfuse REJECTED them (auth_check failed).")
+                print("    Almost always a region/host mismatch: EU keys need")
+                print("    https://cloud.langfuse.com, US keys need https://us.cloud.langfuse.com.")
+                print(f"    current LANGFUSE_HOST = {os.getenv('LANGFUSE_HOST')}")
     return stats
 
 
