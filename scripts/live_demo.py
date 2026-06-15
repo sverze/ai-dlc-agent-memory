@@ -27,12 +27,17 @@ Needs ANTHROPIC_API_KEY + GEMINI_API_KEY in the environment.
 
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 import time
 import uuid as uuid_mod
 from collections.abc import Sequence
 from pathlib import Path
+
+# The repo-root .env — loaded explicitly (NOT find_dotenv, which under `uv run`
+# resolves to ~/.env, not the project's).
+ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
 
 from pydantic import ValidationError
 
@@ -272,7 +277,14 @@ def _run_once(
         print("📡 TRACED — per-agent metrics sent to Langfuse")
         print("═" * 72)
         if isinstance(tracer, NullTracer):
-            print("  LANGFUSE_* not set → tracing was a no-op. Set the keys to see traces.")
+            keys = ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_HOST")
+            seen = [k for k in keys if os.getenv(k)]
+            missing = [k for k in keys if not os.getenv(k)]
+            print("  tracing was a no-op — need LANGFUSE_PUBLIC_KEY + LANGFUSE_SECRET_KEY.")
+            print(f"    .env looked for at: {ENV_PATH}")
+            print(f"    .env exists: {ENV_PATH.exists()}")
+            print(f"    visible now: {', '.join(seen) or 'none'}")
+            print(f"    missing:     {', '.join(missing) or 'none'}")
         else:
             print("  run + per-call generations sent (persona, model, tokens, latency).")
             print("  open your Langfuse project → Traces → 'dlc-run:" + ticket.id + "'")
@@ -280,7 +292,7 @@ def _run_once(
 
 
 def _load_dotenv() -> None:
-    """Load a local .env (cwd/parents) so keys can live there, not just shell exports.
+    """Load the repo-root .env so keys can live there, not just shell exports.
 
     Existing shell exports win (override=False). No-op if python-dotenv isn't installed.
     """
@@ -288,7 +300,7 @@ def _load_dotenv() -> None:
         from dotenv import load_dotenv
     except ImportError:
         return
-    load_dotenv(override=False)
+    load_dotenv(ENV_PATH, override=False)
 
 
 def main() -> int:
