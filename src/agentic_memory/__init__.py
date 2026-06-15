@@ -47,6 +47,14 @@ from .publish import (
     render_adr_html,
     render_requirements_adf,
 )
+from .observability import (
+    GenerationSpan,
+    LangfuseTracer,
+    NullTracer,
+    Tracer,
+    TracingModelClient,
+    make_tracer,
+)
 from .models import (
     DEFAULT_MODEL_BY_ROLE,
     AnthropicModelClient,
@@ -112,6 +120,13 @@ __all__ = [
     "make_publisher",
     "render_adr_html",
     "render_requirements_adf",
+    # observability (Langfuse tracing)
+    "GenerationSpan",
+    "LangfuseTracer",
+    "NullTracer",
+    "Tracer",
+    "TracingModelClient",
+    "make_tracer",
     # graph (L4 shared memory)
     "DEFAULT_GROUP",
     "EdgeType",

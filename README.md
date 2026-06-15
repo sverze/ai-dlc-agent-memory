@@ -64,11 +64,12 @@ are *advisory* and always measured against the human verdict — never used to o
 | 5 — Properties & robustness | conflict resolution, replay verification, V2 stubs, demo | ⬜ Not started |
 
 **Two ways to run everything:** the **offline path** (default — `FakeModelClient`,
-`InMemoryMemoryStore`, `InMemoryTicketSource`, `InMemoryPublisher`; zero keys/services/spend,
-62 deterministic tests) and the **real path** (real model clients, Graphiti/Neo4j, JIRA, and
-Atlassian publisher, gated behind the `live`/`graph`/`jira` extras). Both sit behind the same
-seams (`ModelClient`, `MemoryStore`, `TicketSource`, `Publisher`), so agent and loop code is
-identical in both — that's decision D11, and the gated parity tests prove it holds.
+`InMemoryMemoryStore`, `InMemoryTicketSource`, `InMemoryPublisher`, `NullTracer`; zero
+keys/services/spend, 71 deterministic tests) and the **real path** (real model clients,
+Graphiti/Neo4j, JIRA, Atlassian publisher, Langfuse tracing — gated behind the
+`live`/`graph`/`jira`/`observability` extras). Both sit behind the same seams (`ModelClient`,
+`MemoryStore`, `TicketSource`, `Publisher`, `Tracer`), so agent and loop code is identical in
+both — that's decision D11, and the gated parity tests prove it holds.
 
 ### Modules
 
@@ -82,13 +83,15 @@ identical in both — that's decision D11, and the gated parity tests prove it h
 | `src/agentic_memory/graphiti_store.py` | **Real `GraphitiMemoryStore`** — the six seam primitives over graphiti-core EntityNode/EntityEdge on Neo4j (D15): namespaced uuids, lossless `attrs_json`, one event loop per store. 11 gated tests prove fake/real parity. | ✅ Done (swap #2) |
 | `src/agentic_memory/tickets.py` | `TicketSource` seam (D6/D16): `InMemoryTicketSource` fake + **real `JiraTicketSource`** (REST v3, basic auth, deterministic ADF→text flattening, mapped errors, `jira` extra). | ✅ Done (swap #3) |
 | `src/agentic_memory/publish.py` | `Publisher` seam (D17/FR8): pure ADF/XHTML renderers + `InMemoryPublisher` fake + **`AtlassianPublisher`** — BA requirements → JIRA comment, SA ADR → Confluence page (traceability table + verdict + Miro slot) + ticket back-link. | ✅ Done (review surface) |
+| `src/agentic_memory/observability.py` | `Tracer` seam (D18/FR10): `NullTracer` + **`LangfuseTracer`** + `TracingModelClient` wrapper — one Langfuse generation per model call (persona/model/tokens/latency), strictly additive (faults swallowed). `observability` extra. | ✅ Done (Stage 3 #1) |
 | `src/agentic_memory/agents.py` | `BAAgent` (ticket → `RequirementsArtifact` → memory) and `SAAgent` (memory → `ADR` or clarifications), both over the `ModelClient` + `MemoryStore` seams; prompts carry type-derived JSON schemas (D14). | ✅ Done |
 | `src/agentic_memory/loop.py` | `run_loop` — drives the FSM through `intake → analysis ⇄ clarification → decision (+ escalation)`; the full BA→SA roundtrip, logged and replayable; proven on the full real stack. | ✅ Done |
 
-`43 passed` offline — `tests/test_{artifacts,events,fsm,models,graph,loop}.py`. Plus two
-gated opt-in suites, both passing: `-m live` (real provider calls + end-to-end loop) and
-`-m graph` (11 tests proving `GraphitiMemoryStore` is behaviorally identical to the fake
-against dockerized Neo4j). Decisions in [`DECISIONS.md`](DECISIONS.md).
+`71 passed` offline (renderers, fakes, seam pass-through — zero keys/services). Plus four
+gated opt-in suites, all passing: `-m live` (real provider calls + end-to-end loop), `-m graph`
+(11 tests, `GraphitiMemoryStore` ≡ fake against dockerized Neo4j), `-m jira` (mocked-transport
++ env-gated live fetch/publish), and `-m observability` (Langfuse tracer via injected mock
+client). Decisions in [`DECISIONS.md`](DECISIONS.md).
 
 > See the loop run end-to-end (prints requirements, FSM path, ADR, omission check):
 > ```bash
@@ -144,6 +147,21 @@ verdict" section. No one needs Neo4j or a terminal: they open the ticket, follow
 the ADR. Needs Confluence enabled on the site; set `CONFLUENCE_SPACE_KEY` to target a space
 (otherwise the first space is used — the printed page URL shows which).
 
+To send **per-agent metrics to Langfuse**, you need the `observability` extra and Langfuse keys
+(`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` — see `.env.example`):
+
+```bash
+uv run --extra observability python -m pytest -m observability -v   # injected-mock-client tests
+uv run --extra live --extra observability python scripts/live_demo.py --trace   # real run → Langfuse
+```
+
+Each model call becomes a Langfuse **generation** tagged with persona/model/tokens/latency, nested
+under a per-run span — so BA (Gemini) and SA (Claude) are comparable in the Traces view. **No keys =
+silent no-op** (the loop is never affected). Use **Langfuse Cloud** (free tier, fastest) or
+**self-host** (set `LANGFUSE_HOST`; the heavy infra isn't bundled here — D9 self-host applies once
+you handle non-anonymized data). *Ollama / local models are V2 (D8 router) but would be traced for
+free through the same wrapper.*
+
 **Neo4j console:** http://localhost:7474 — username `neo4j`, password `devpassword`
 (the docker-compose local-dev default; override via `NEO4J_AUTH` + `NEO4J_PASSWORD` for
 anything shared). After a `--graph` demo run, paste the Cypher the demo prints to see that
@@ -185,13 +203,14 @@ assert replay_final_state(log) is fsm.state   # the log replays to identical sta
 │   ├── graphiti_store.py    # real GraphitiMemoryStore over Neo4j ✅ (D15)
 │   ├── tickets.py           # TicketSource seam + real JiraTicketSource ✅ (D16)
 │   ├── publish.py           # Publisher seam: requirements→JIRA comment, ADR→Confluence ✅ (D17)
+│   ├── observability.py     # Tracer seam + LangfuseTracer + TracingModelClient ✅ (D18)
 │   ├── agents.py            # BAAgent / SAAgent (schema-in-prompt, D14)
 │   └── loop.py              # run_loop — the FSM-driven roundtrip
 ├── scripts/live_demo.py     # one command: ticket → ADR + token usage (+ --graph, --jira, --runs)
 ├── docker-compose.yml       # Neo4j for the real graph store
-├── tests/                   # pytest suite (43 offline + gated live/graph)
+├── tests/                   # pytest suite (71 offline + gated live/graph/jira/observability)
 ├── Plans/                   # design proposals (e.g. graphiti-entity-edge-model.md → D10)
-├── DECISIONS.md             # durable decision log (D1–D17) — read this first
+├── DECISIONS.md             # durable decision log (D1–D18) — read this first
 ├── .env.example             # setup template (spec Appendix A.2)
 ├── pyproject.toml           # uv project; pytest config
 ├── uv.lock                  # pinned deps (committed — NFR6 reproducibility)
@@ -240,10 +259,13 @@ fake so the loop runs offline, and going live = implementing the same interface 
 This is the **go/no-go**: does the loop produce ADRs a senior architect actually accepts (≥70% accept,
 <10% reject, D7)? The machine is built; now we measure it. Four pieces, in rough order:
 
-1. **OTel → Langfuse instrumentation.** Wrap each `ModelClient.complete` (the `Usage` field already
-   carries tokens, FR10); trace each run so quality work has data. Self-hosted Langfuse via compose.
-2. **A frozen scenario set.** A handful of anonymized, externally-authored delivery tickets in JIRA —
-   the fixed input the gate judges against (D9). Not author-it-yourself; the credibility is in it being external.
+1. **OTel → Langfuse instrumentation** — ✅ **Done (D18).** `TracingModelClient` wraps the
+   `ModelClient` seam and emits one Langfuse generation per call (persona, model, tokens, latency)
+   under a per-run span; `make_tracer()` is a no-op without keys. Run with `--trace`; works against
+   Langfuse Cloud or self-host. BA and SA are comparable side by side in the Traces view.
+2. **A frozen scenario set** ← **DO THIS NEXT.** A handful of anonymized, externally-authored delivery
+   tickets in JIRA — the fixed input the gate judges against (D9). Not author-it-yourself; the
+   credibility is in it being external.
 3. **Architect verdict capture (resolve OD3).** The ADR page already has a verdict *section* (D17);
    what's missing is the *capture path* that turns accept/revise/reject + notes into the κ/accept-rate
    data — a Confluence label/macro, a review sheet, or a small form. Pick one (OD3).
@@ -257,7 +279,7 @@ This is the **go/no-go**: does the loop produce ADRs a senior architect actually
 (conflict resolution, replay verification, V2 interface stubs, honest demo). **Build nothing below
 the gate until it holds** (D7).
 
-**Start here:** read `DECISIONS.md` (D1–D17), run the full round-trip
+**Start here:** read `DECISIONS.md` (D1–D18), run the full round-trip
 (`docker compose up -d && uv run --extra live --extra graph --extra jira python scripts/live_demo.py --graph --jira <KEY> --publish`),
 then pick up Stage 3 step **#1** (Langfuse instrumentation) or **#3** (verdict capture, OD3).
 

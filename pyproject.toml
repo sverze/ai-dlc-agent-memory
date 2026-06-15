@@ -14,6 +14,8 @@ live = ["anthropic>=0.40", "google-genai>=1.0"]
 graph = ["graphiti-core[kuzu]>=0.29"]
 # Real JIRA ticket source (direct REST per D6). Offline path never needs this (D11).
 jira = ["httpx>=0.27"]
+# Observability — Langfuse traces per-agent model calls (FR10). Offline = no-op (D11).
+observability = ["langfuse>=4,<5"]
 
 [dependency-groups]
 dev = ["pytest>=8"]
@@ -34,4 +36,5 @@ markers = [
     "live: hits a real provider API (needs keys, costs money); excluded by default",
     "graph: needs a running Neo4j (docker compose up -d); excluded by default",
     "jira: needs the jira extra (httpx); live fetch additionally needs ATLASSIAN_* env",
+    "observability: needs the observability extra (langfuse); excluded by default",
 ]

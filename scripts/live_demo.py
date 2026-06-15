@@ -13,6 +13,9 @@ The quantifiable input/output surface of the prototype, in one command:
     uv run --extra live --extra graph --extra jira python scripts/live_demo.py \
         --graph --jira SCRUM-1 --publish
 
+    # + OBSERVABILITY — send per-agent metrics to Langfuse (needs LANGFUSE_* env):
+    uv run --extra live --extra observability python scripts/live_demo.py --trace
+
 Prints: the input ticket, the BA's extracted RequirementsArtifact, the FSM path
 from the event log, the SA's ADR with requirement traces, the structural omission
 check, and real token usage per model call (the raw material of the token-efficiency
@@ -92,11 +95,17 @@ def _run_once(
     use_graph: bool = False,
     ba_model: str | None = None,
     publish: bool = False,
+    trace: bool = False,
 ) -> dict:
     """One full loop run; returns measurable outcomes. Prints detail if verbose."""
+    from agentic_memory import NullTracer, TracingModelClient, make_tracer
+
     log_path = Path(tempfile.mkdtemp()) / "events.jsonl"
     override = {AgentPersona.BUSINESS_ANALYST: ba_model} if ba_model else None
-    client = UsageRecorder(make_model_client(model_by_role=override))
+    recorder = UsageRecorder(make_model_client(model_by_role=override))
+    # Langfuse tracing wraps the client; no-op (NullTracer) unless LANGFUSE_* keys are set.
+    tracer = make_tracer() if trace else NullTracer()
+    client = TracingModelClient(recorder, tracer) if trace else recorder
     if use_graph:
         from agentic_memory import GraphitiMemoryStore  # needs the `graph` extra
 
@@ -112,17 +121,19 @@ def _run_once(
     started = time.monotonic()
     try:
         result = None
-        for attempt in range(4):  # transient provider 5xx happen; retry a few times
-            try:
-                result = run_loop(ticket, ba=ba, sa=sa, fsm=fsm, group_id=group)
-                break
-            except Exception as exc:
-                if any(s in str(exc) for s in ("503", "UNAVAILABLE", "overload")):
-                    if verbose:
-                        print(f"  … provider busy (attempt {attempt + 1}), retrying")
-                    time.sleep(6)
-                    continue
-                raise
+        # One Langfuse trace per run; model-call generations nest under it.
+        with tracer.run(name=f"dlc-run:{ticket.id}", ticket_id=ticket.id, group_id=group):
+            for attempt in range(4):  # transient provider 5xx happen; retry a few times
+                try:
+                    result = run_loop(ticket, ba=ba, sa=sa, fsm=fsm, group_id=group)
+                    break
+                except Exception as exc:
+                    if any(s in str(exc) for s in ("503", "UNAVAILABLE", "overload")):
+                        if verbose:
+                            print(f"  … provider busy (attempt {attempt + 1}), retrying")
+                        time.sleep(6)
+                        continue
+                    raise
         if result is None:
             stats["error"] = "provider unavailable after retries"
             return stats
@@ -211,7 +222,7 @@ def _run_once(
     print("📊 QUANTIFIED — real token usage per call (FR10 raw material)")
     print("═" * 72)
     print("  (input tokens include the injected JSON schema — D14 overhead, by design)")
-    for i, (persona, model, t_in, t_out) in enumerate(client.calls, 1):
+    for i, (persona, model, t_in, t_out) in enumerate(recorder.calls, 1):
         print(f"  call {i}: {persona.value:<20} {model:<22} in={t_in:>6}  out={t_out:>6}")
     print(f"  TOTAL: {stats['calls']} calls   in={stats['tokens_in']}  "
           f"out={stats['tokens_out']}  all={stats['tokens_in'] + stats['tokens_out']} tokens"
@@ -252,6 +263,18 @@ def _run_once(
             print(f"  ADR → Confluence page: {page_url}")
             print(f"  (+ back-link comment on {ticket.id})")
         print("  the architect now reviews the ADR page against the requirements ✦")
+
+    if trace:
+        tracer.flush()  # OTel batches — force spans out before the process exits
+        print()
+        print("═" * 72)
+        print("📡 TRACED — per-agent metrics sent to Langfuse")
+        print("═" * 72)
+        if isinstance(tracer, NullTracer):
+            print("  LANGFUSE_* not set → tracing was a no-op. Set the keys to see traces.")
+        else:
+            print("  run + per-call generations sent (persona, model, tokens, latency).")
+            print("  open your Langfuse project → Traces → 'dlc-run:" + ticket.id + "'")
     return stats
 
 
@@ -278,6 +301,9 @@ def main() -> int:
     publish = "--publish" in args  # write results back to JIRA/Confluence (pair with --jira)
     if publish:
         args.remove("--publish")
+    trace = "--trace" in args  # send per-agent metrics to Langfuse (needs LANGFUSE_* env)
+    if trace:
+        args.remove("--trace")
 
     if jira_key:
         from agentic_memory import JiraTicketSource  # needs the `jira` extra
@@ -297,7 +323,7 @@ def main() -> int:
         if runs > 1:
             print(f"\n--- run {n + 1}/{runs} ---")
         r = _run_once(ticket, verbose=(n == 0), use_graph=use_graph, ba_model=ba_model,
-                      publish=publish)
+                      publish=publish, trace=trace)
         if not r.get("ok"):
             print(f"  ❌ run {n + 1} failed: {r.get('error')}")
         results.append(r)

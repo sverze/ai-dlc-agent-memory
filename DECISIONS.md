@@ -356,6 +356,37 @@ confirmed. Stage 2 is functionally complete; Stage 3 (the gate) is next.
 
 ---
 
+## D18 — Observability: Langfuse tracing by wrapping the seam ✅ (FR10, Stage 3 #1)
+
+**Decision.** Per-agent model calls are traced into Langfuse through a `Tracer` seam
+(`observability.py`): `NullTracer` (offline default, all no-ops) + `LangfuseTracer` (lazy
+`langfuse`, optional `observability` extra) + `make_tracer()` (returns Langfuse only when keys
+are present, else Null — never instantiates Langfuse keyless). A `TracingModelClient` **wraps**
+any `ModelClient` and emits one Langfuse **generation** per `complete()` — tagged with persona,
+model id, token usage, latency — nested under a parent run span. So the BA (Gemini) and SA
+(Claude) are comparable side by side, and `agents.py` / `loop.py` / `models.py` stay zero-diff.
+
+**Hard constraints (FirstPrinciples).** Observability is *strictly additive*: a tracer fault is
+swallowed and the model response always passes through unchanged — a Langfuse outage can never
+break or alter a run. No keys → no-op (D11). `flush()` before process exit because OTel batches
+spans (a short demo would otherwise drop them). The "instrumentation must live inside the measured
+code" assumption is rejected — wrapping the seam externally gives full visibility with zero intrusion.
+
+**Deploy is config, not code.** Works against **Langfuse Cloud** (free tier — set the 3 env vars,
+fastest way to see it) or **self-hosted** (set `LANGFUSE_HOST`). The heavy self-host infra
+(postgres + clickhouse + redis + minio) is documented, not bundled in our compose. D9 (self-host
+for real data) applies once non-anonymized data is involved; the anonymized prototype can use Cloud.
+
+**Ollama / local models (the user's interest)** stay V2 — they're a *router* concern (D8 defers
+LiteLLM). But because tracing wraps the `ModelClient` seam, a future Ollama client is observed in
+Langfuse for free, no instrumentation change.
+
+**Langfuse v4 API (pinned 2026-06-16):** `Langfuse(public_key, secret_key, host)` +
+`start_as_current_observation(name, as_type="generation"|"chain", model, input, usage_details,
+metadata)` (OTel-context nesting) + `.update()` + `.flush()`. Demo `--trace` wires it.
+
+---
+
 ## Open decisions
 
 - **OD3 — Architect verdict capture.** Langfuse annotations vs. a separate review sheet
