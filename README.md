@@ -65,7 +65,7 @@ are *advisory* and always measured against the human verdict — never used to o
 
 **Two ways to run everything:** the **offline path** (default — `FakeModelClient`,
 `InMemoryMemoryStore`, `InMemoryTicketSource`, `InMemoryPublisher`, `NullTracer`; zero
-keys/services/spend, 71 deterministic tests) and the **real path** (real model clients,
+keys/services/spend, 72 deterministic tests) and the **real path** (real model clients,
 Graphiti/Neo4j, JIRA, Atlassian publisher, Langfuse tracing — gated behind the
 `live`/`graph`/`jira`/`observability` extras). Both sit behind the same seams (`ModelClient`,
 `MemoryStore`, `TicketSource`, `Publisher`, `Tracer`), so agent and loop code is identical in
@@ -87,7 +87,7 @@ both — that's decision D11, and the gated parity tests prove it holds.
 | `src/agentic_memory/agents.py` | `BAAgent` (ticket → `RequirementsArtifact` → memory) and `SAAgent` (memory → `ADR` or clarifications), both over the `ModelClient` + `MemoryStore` seams; prompts carry type-derived JSON schemas (D14). | ✅ Done |
 | `src/agentic_memory/loop.py` | `run_loop` — drives the FSM through `intake → analysis ⇄ clarification → decision (+ escalation)`; the full BA→SA roundtrip, logged and replayable; proven on the full real stack. | ✅ Done |
 
-`71 passed` offline (renderers, fakes, seam pass-through — zero keys/services). Plus four
+`72 passed` offline (renderers, fakes, seam pass-through — zero keys/services). Plus four
 gated opt-in suites, all passing: `-m live` (real provider calls + end-to-end loop), `-m graph`
 (11 tests, `GraphitiMemoryStore` ≡ fake against dockerized Neo4j), `-m jira` (mocked-transport
 + env-gated live fetch/publish), and `-m observability` (Langfuse tracer via injected mock
@@ -159,11 +159,18 @@ uv run --extra live --extra observability python scripts/live_demo.py --trace   
 ```
 
 Each model call becomes a Langfuse **generation** tagged with persona/model/tokens/latency, nested
-under a per-run span — so BA (Gemini) and SA (Claude) are comparable in the Traces view. **No keys =
-silent no-op** (the loop is never affected). Use **Langfuse Cloud** (free tier, fastest) or
-**self-host** (set `LANGFUSE_HOST`; the heavy infra isn't bundled here — D9 self-host applies once
-you handle non-anonymized data). *Ollama / local models are V2 (D8 router) but would be traced for
-free through the same wrapper.*
+under a per-run span — so BA (Gemini) and SA (Claude) are comparable in the Traces view (left nav →
+**Tracing → Traces → `dlc-run:<ticket>`**). **No keys = silent no-op** (the loop is never affected).
+`--trace` runs `auth_check()` and prints **✓ connection verified** or a **✗** that names the problem,
+so a misconfig is obvious in one run.
+
+> ⚠️ **`LANGFUSE_HOST` must match your keys' region** — Langfuse keys are region-specific. US-region
+> keys against the EU host (or vice versa) fail with a silent `401` and traces never appear. US Cloud
+> → `https://us.cloud.langfuse.com`, EU Cloud → `https://cloud.langfuse.com`, self-host → your
+> `LANGFUSE_HOST`. (Self-host infra isn't bundled here; D9 self-host applies once you handle
+> non-anonymized data.)
+
+*Ollama / local models are V2 (D8 router) but would be traced for free through the same wrapper.*
 
 **Neo4j console:** http://localhost:7474 — username `neo4j`, password `devpassword`
 (the docker-compose local-dev default; override via `NEO4J_AUTH` + `NEO4J_PASSWORD` for
@@ -211,7 +218,7 @@ assert replay_final_state(log) is fsm.state   # the log replays to identical sta
 │   └── loop.py              # run_loop — the FSM-driven roundtrip
 ├── scripts/live_demo.py     # one command: ticket → ADR + token usage (+ --graph, --jira, --runs)
 ├── docker-compose.yml       # Neo4j for the real graph store
-├── tests/                   # pytest suite (71 offline + gated live/graph/jira/observability)
+├── tests/                   # pytest suite (72 offline + gated live/graph/jira/observability)
 ├── Plans/                   # design proposals (e.g. graphiti-entity-edge-model.md → D10)
 ├── DECISIONS.md             # durable decision log (D1–D18) — read this first
 ├── .env.example             # setup template (spec Appendix A.2)

@@ -385,6 +385,15 @@ Langfuse for free, no instrumentation change.
 `start_as_current_observation(name, as_type="generation"|"chain", model, input, usage_details,
 metadata)` (OTel-context nesting) + `.update()` + `.flush()`. Demo `--trace` wires it.
 
+**Verified live 2026-06-16** (US Cloud). Operational lessons, now guarded in code/docs:
+- **`.env` is auto-loaded** at the entry points (demo + `tests/conftest.py`, via `python-dotenv`,
+  `override=False` so shell wins) — loaded from the **repo-root** `.env` explicitly, because bare
+  `find_dotenv()` under `uv run` resolves to `~/.env`. Library code still just reads `os.getenv`.
+- **`LANGFUSE_HOST` must match the keys' region** — US keys vs the EU host (the default I shipped)
+  fail with a silent `401`; "sent" without verification is a lie. `Tracer.verify()` → `auth_check()`
+  now confirms delivery, and `--trace` prints ✓/✗ with the region hint. `.env.example` spells out
+  US/EU/self-host. This was the whole "sent but empty UI" saga — root cause was a host/region mismatch.
+
 ---
 
 ## Open decisions
