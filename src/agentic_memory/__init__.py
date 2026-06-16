@@ -62,6 +62,18 @@ from .scenarios import (
     load_scenarios,
     parse_scenario,
 )
+from .verdicts import (
+    FileVerdictStore,
+    GateReadout,
+    InMemoryVerdictStore,
+    Verdict,
+    VerdictDecision,
+    VerdictStore,
+    load_verdicts,
+    parse_verdict,
+    summarize_verdicts,
+    wilson_lower_bound,
+)
 from .models import (
     DEFAULT_MODEL_BY_ROLE,
     AnthropicModelClient,
@@ -140,6 +152,17 @@ __all__ = [
     "ScenarioTicketSource",
     "load_scenarios",
     "parse_scenario",
+    # verdicts (human gate signal)
+    "FileVerdictStore",
+    "GateReadout",
+    "InMemoryVerdictStore",
+    "Verdict",
+    "VerdictDecision",
+    "VerdictStore",
+    "load_verdicts",
+    "parse_verdict",
+    "summarize_verdicts",
+    "wilson_lower_bound",
     # graph (L4 shared memory)
     "DEFAULT_GROUP",
     "EdgeType",

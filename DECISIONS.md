@@ -426,8 +426,35 @@ hints for the *advisory* omission metric — never derived by us, never required
 
 ---
 
+## D20 — Architect verdict capture: in-repo verdict log, human-only sink ✅ (Stage 3 #3, resolves OD3)
+
+**Decision.** The architect's accept/revise/reject is captured as an **in-repo verdict log** —
+`Verdict` files (markdown+frontmatter) under `verdicts/`, behind a `VerdictStore` seam
+(`verdicts.py`: `FileVerdictStore` + `InMemoryVerdictStore` fake). Each verdict carries
+`scenario_id` + `adr_id` + `set_fingerprint` + reviewer + notes, so it's attributable to an exact
+ADR on an exact corpus version (replayable). Chosen over Langfuse score annotations / a Confluence
+page field (the other OD3 candidates) for being version-controlled, dependency-free, and replayable;
+either can be added later behind the same seam. `scripts/record_verdict.py` records one (prompts or args).
+
+**The invariant (FirstPrinciples / D7 / NFR4): a human-only sink.** `VerdictStore` records *human*
+verdicts only — no machine score is ever written as a `Verdict`. The LLM judge (Stage 3 #4) is a
+**separate stream**, *compared* to these verdicts via Cohen's κ, never merged. That structural
+separation is what makes "the human verdict is never overridden by a machine score" true rather than
+a promise. Verified: `.record()` has no machine caller; no verdicts are shipped in the repo (a
+fabricated verdict would invalidate the gate exactly as a fabricated scenario would).
+
+**Honest gate readout.** `summarize_verdicts()` reports accept rate with a **Wilson 95% lower bound**
+(D7 says "≥70% accept, lower 95% CI" — not the point estimate), reject rate, and `meets_gate`
+(accept-lower-95 ≥ 0.70 AND reject < 0.10), optionally filtered to one set fingerprint. Small samples
+correctly fail (e.g. 1/1 accept → 100% rate but 21% lower bound → not a pass). stdlib math, no dep.
+
+**Verified:** 97 offline tests (model round-trip, store record/load, Wilson edge/monotonic, gate
+boolean per D7); CLI records + prints the readout; agents/loop/etc zero-diff; no new runtime dep.
+
+---
+
 ## Open decisions
 
-- **OD3 — Architect verdict capture.** Langfuse annotations vs. a separate review sheet
-  feeding the eval log. The ADR page now carries a verdict *section* (D17); what remains is the
-  *capture* path that feeds the κ/accept-rate metrics. (PRD §15 Q4 — resolve at Stage 3.)
+- *(none — OD1 resolved by D10, OD2 by D15, OD3 by D20, OD4 by D14.)* Remaining Stage-3 work is
+  tracked in the README "Continuing this work": the advisory eval harness + κ (#4), and — outside the
+  build — sourcing the externally-authored scenario corpus (D9) and architect verdicts (D20).
