@@ -59,13 +59,13 @@ are *advisory* and always measured against the human verdict — never used to o
 |-------|-------|-------|
 | **1 — Substrate** | typed artifacts, append-only event log, deterministic FSM | ✅ **Complete** |
 | **2 — Core loop** | BA/SA agents, L4 memory, FSM negotiation, model + memory + JIRA + publish seams | ✅ **Complete & live-verified** (swaps #1, #1.5, #2, #3, D17) |
-| 3 — Make it visible, then judge it ← **HYPOTHESIS GATE** | OTel→Langfuse, frozen scenarios, architect verdict capture, advisory eval + κ | ⬜ **Next** |
+| 3 — Make it visible, then judge it ← **HYPOTHESIS GATE** | OTel→Langfuse ✅, frozen-scenario harness ✅, architect verdict capture, advisory eval + κ | 🟡 **In progress** (#1 Langfuse, #2 scenario harness done; verdict capture + eval + real corpus remain) |
 | 4 — Breadth | Confluence / Notion / Miro ingestion | ⬜ Not started |
 | 5 — Properties & robustness | conflict resolution, replay verification, V2 stubs, demo | ⬜ Not started |
 
 **Two ways to run everything:** the **offline path** (default — `FakeModelClient`,
 `InMemoryMemoryStore`, `InMemoryTicketSource`, `InMemoryPublisher`, `NullTracer`; zero
-keys/services/spend, 72 deterministic tests) and the **real path** (real model clients,
+keys/services/spend, 86 deterministic tests) and the **real path** (real model clients,
 Graphiti/Neo4j, JIRA, Atlassian publisher, Langfuse tracing — gated behind the
 `live`/`graph`/`jira`/`observability` extras). Both sit behind the same seams (`ModelClient`,
 `MemoryStore`, `TicketSource`, `Publisher`, `Tracer`), so agent and loop code is identical in
@@ -84,10 +84,11 @@ both — that's decision D11, and the gated parity tests prove it holds.
 | `src/agentic_memory/tickets.py` | `TicketSource` seam (D6/D16): `InMemoryTicketSource` fake + **real `JiraTicketSource`** (REST v3, basic auth, deterministic ADF→text flattening, mapped errors, `jira` extra). | ✅ Done (swap #3) |
 | `src/agentic_memory/publish.py` | `Publisher` seam (D17/FR8): pure ADF/XHTML renderers + `InMemoryPublisher` fake + **`AtlassianPublisher`** — BA requirements → JIRA comment, SA ADR → Confluence page (traceability table + verdict + Miro slot) + ticket back-link. | ✅ Done (review surface) |
 | `src/agentic_memory/observability.py` | `Tracer` seam (D18/FR10): `NullTracer` + **`LangfuseTracer`** + `TracingModelClient` wrapper — one Langfuse generation per model call (persona/model/tokens/latency), strictly additive (faults swallowed). `observability` extra. | ✅ Done (Stage 3 #1) |
+| `src/agentic_memory/scenarios.py` | Frozen gate corpus (D19/D9): `Scenario` + markdown-frontmatter loader + fingerprinted `ScenarioSet` + `ScenarioTicketSource` (feeds the loop unchanged). Corpus in `scenarios/`; `scripts/run_scenarios.py` runs it. | ✅ Harness done (Stage 3 #2) |
 | `src/agentic_memory/agents.py` | `BAAgent` (ticket → `RequirementsArtifact` → memory) and `SAAgent` (memory → `ADR` or clarifications), both over the `ModelClient` + `MemoryStore` seams; prompts carry type-derived JSON schemas (D14). | ✅ Done |
 | `src/agentic_memory/loop.py` | `run_loop` — drives the FSM through `intake → analysis ⇄ clarification → decision (+ escalation)`; the full BA→SA roundtrip, logged and replayable; proven on the full real stack. | ✅ Done |
 
-`72 passed` offline (renderers, fakes, seam pass-through — zero keys/services). Plus four
+`86 passed` offline (renderers, fakes, seam pass-through — zero keys/services). Plus four
 gated opt-in suites, all passing: `-m live` (real provider calls + end-to-end loop), `-m graph`
 (11 tests, `GraphitiMemoryStore` ≡ fake against dockerized Neo4j), `-m jira` (mocked-transport
 + env-gated live fetch/publish), and `-m observability` (Langfuse tracer via injected mock
@@ -214,13 +215,16 @@ assert replay_final_state(log) is fsm.state   # the log replays to identical sta
 │   ├── tickets.py           # TicketSource seam + real JiraTicketSource ✅ (D16)
 │   ├── publish.py           # Publisher seam: requirements→JIRA comment, ADR→Confluence ✅ (D17)
 │   ├── observability.py     # Tracer seam + LangfuseTracer + TracingModelClient ✅ (D18)
+│   ├── scenarios.py         # frozen gate corpus: ScenarioSet + ScenarioTicketSource ✅ (D19)
 │   ├── agents.py            # BAAgent / SAAgent (schema-in-prompt, D14)
 │   └── loop.py              # run_loop — the FSM-driven roundtrip
 ├── scripts/live_demo.py     # one command: ticket → ADR + token usage (+ --graph, --jira, --runs)
+├── scripts/run_scenarios.py # run the frozen scenario set; prints fingerprint + summary
+├── scenarios/               # frozen gate corpus (illustrative examples + D9 boundary README)
 ├── docker-compose.yml       # Neo4j for the real graph store
-├── tests/                   # pytest suite (72 offline + gated live/graph/jira/observability)
+├── tests/                   # pytest suite (86 offline + gated live/graph/jira/observability)
 ├── Plans/                   # design proposals (e.g. graphiti-entity-edge-model.md → D10)
-├── DECISIONS.md             # durable decision log (D1–D18) — read this first
+├── DECISIONS.md             # durable decision log (D1–D19) — read this first
 ├── .env.example             # setup template (spec Appendix A.2)
 ├── pyproject.toml           # uv project; pytest config
 ├── uv.lock                  # pinned deps (committed — NFR6 reproducibility)
@@ -273,10 +277,12 @@ This is the **go/no-go**: does the loop produce ADRs a senior architect actually
    `ModelClient` seam and emits one Langfuse generation per call (persona, model, tokens, latency)
    under a per-run span; `make_tracer()` is a no-op without keys. Run with `--trace`; works against
    Langfuse Cloud or self-host. BA and SA are comparable side by side in the Traces view.
-2. **A frozen scenario set** ← **DO THIS NEXT.** A handful of anonymized, externally-authored delivery
-   tickets in JIRA — the fixed input the gate judges against (D9). Not author-it-yourself; the
-   credibility is in it being external.
-3. **Architect verdict capture (resolve OD3).** The ADR page already has a verdict *section* (D17);
+2. **A frozen scenario set** — ✅ **Harness done (D19).** `scenarios/` holds markdown+frontmatter
+   tickets loaded via `ScenarioTicketSource` (the loop is unchanged) and fingerprinted for provenance;
+   `scripts/run_scenarios.py` runs the set and summarises. **Still needed: the real corpus** — the
+   shipped scenarios are clearly-labelled *illustrative placeholders*; the gate's credibility requires
+   an **externally-authored, anonymized** set (D9), which a senior architect (not the build team) drops in.
+3. **Architect verdict capture (resolve OD3)** ← **DO THIS NEXT.** The ADR page already has a verdict *section* (D17);
    what's missing is the *capture path* that turns accept/revise/reject + notes into the κ/accept-rate
    data — a Confluence label/macro, a review sheet, or a small form. Pick one (OD3).
 4. **Advisory eval harness.** Traceability + omission/grounding scorers (the graph already answers
@@ -289,7 +295,7 @@ This is the **go/no-go**: does the loop produce ADRs a senior architect actually
 (conflict resolution, replay verification, V2 interface stubs, honest demo). **Build nothing below
 the gate until it holds** (D7).
 
-**Start here:** read `DECISIONS.md` (D1–D18), run the full round-trip
+**Start here:** read `DECISIONS.md` (D1–D19), run the full round-trip
 (`docker compose up -d && uv run --extra live --extra graph --extra jira python scripts/live_demo.py --graph --jira <KEY> --publish`),
 then pick up Stage 3 step **#1** (Langfuse instrumentation) or **#3** (verdict capture, OD3).
 

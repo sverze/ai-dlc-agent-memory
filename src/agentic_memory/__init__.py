@@ -55,6 +55,13 @@ from .observability import (
     TracingModelClient,
     make_tracer,
 )
+from .scenarios import (
+    Scenario,
+    ScenarioSet,
+    ScenarioTicketSource,
+    load_scenarios,
+    parse_scenario,
+)
 from .models import (
     DEFAULT_MODEL_BY_ROLE,
     AnthropicModelClient,
@@ -127,6 +134,12 @@ __all__ = [
     "Tracer",
     "TracingModelClient",
     "make_tracer",
+    # scenarios (frozen gate corpus)
+    "Scenario",
+    "ScenarioSet",
+    "ScenarioTicketSource",
+    "load_scenarios",
+    "parse_scenario",
     # graph (L4 shared memory)
     "DEFAULT_GROUP",
     "EdgeType",

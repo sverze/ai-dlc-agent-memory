@@ -396,6 +396,36 @@ metadata)` (OTel-context nesting) + `.update()` + `.flush()`. Demo `--trace` wir
 
 ---
 
+## D19 — Frozen scenario set: in-repo harness, external authorship is the validity ✅ (Stage 3 #2, D9)
+
+**Decision.** The gate's input corpus lives **in-repo** as markdown+frontmatter files under
+`scenarios/`, loaded by `scenarios.py` (`Scenario`, `ScenarioSet`, `load_scenarios`) and fed to
+the loop through a `ScenarioTicketSource(TicketSource)` — so a scenario is indistinguishable from
+a real JIRA ticket to the agents, and `run_loop` is unchanged. In-repo (vs authoring in JIRA)
+because the set must be version-controlled, immutable, and replayable (NFR1); `ScenarioSet.fingerprint()`
+is an order-independent sha256 over canonical content **including provenance and expectations**, so
+every eval result is attributable to an exact set version. Parsing is dep-free (frontmatter is simple
+`key:value`; bodies are prose, may contain `---`). `scripts/run_scenarios.py` runs the set and summarises.
+
+**The validity boundary (the load-bearing point, D9/D7).** A scenario set is only a credible gate
+if it is **externally authored and anonymized** — if the build team or a model writes the tickets,
+the gate measures self-consistency, not capability (the inputs-side twin of the same-family-LLM-judge
+anti-pattern, D7). The harness can freeze/load/attribute a corpus; it **cannot** supply that validity.
+So: the 3 scenarios shipped are **illustrative placeholders** (`source: illustrative`, `anonymized: true`)
+— format examples, not the gate corpus. Enforced, not just documented: a test asserts every shipped
+scenario is anonymized and not labelled `real`, and `run_scenarios.py` prints a loud "ILLUSTRATIVE —
+NOT A VALID GATE CORPUS" banner + per-row source labels so a green illustrative run can never be
+mistaken for a gate verdict. The real corpus is dropped in later by a senior architect not on the build team.
+
+**Schema (from per-consumer analysis):** required `id/title/body` (the BA's ticket); provenance
+`source/anonymized/author` (architect trust); optional `expected_key_requirements/notes` (author-supplied
+hints for the *advisory* omission metric — never derived by us, never required).
+
+**Verified:** harness exercised end-to-end — the 3 illustrative scenarios ran through the real loop
+3/3 terminal, 0 omissions. 86 offline tests; agents/loop/models/etc zero-diff; no new runtime dep.
+
+---
+
 ## Open decisions
 
 - **OD3 — Architect verdict capture.** Langfuse annotations vs. a separate review sheet
