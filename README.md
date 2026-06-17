@@ -59,13 +59,13 @@ are *advisory* and always measured against the human verdict — never used to o
 |-------|-------|-------|
 | **1 — Substrate** | typed artifacts, append-only event log, deterministic FSM | ✅ **Complete** |
 | **2 — Core loop** | BA/SA agents, L4 memory, FSM negotiation, model + memory + JIRA + publish seams | ✅ **Complete & live-verified** (swaps #1, #1.5, #2, #3, D17) |
-| 3 — Make it visible, then judge it ← **HYPOTHESIS GATE** | OTel→Langfuse ✅, frozen-scenario harness ✅, verdict capture ✅, advisory eval + κ | 🟡 **In progress** (#1–#3 done; #4 advisory eval + κ remains, plus the external corpus + verdicts) |
+| 3 — Make it visible, then judge it ← **HYPOTHESIS GATE** | OTel→Langfuse ✅, frozen-scenario harness ✅, verdict capture ✅, advisory eval + κ ✅ | 🟢 **Build complete** (#1–#4 D18–D21). Gate is *runnable*; awaits the external corpus + real architect verdicts to run for real |
 | 4 — Breadth | Confluence / Notion / Miro ingestion | ⬜ Not started |
 | 5 — Properties & robustness | conflict resolution, replay verification, V2 stubs, demo | ⬜ Not started |
 
 **Two ways to run everything:** the **offline path** (default — `FakeModelClient`,
 `InMemoryMemoryStore`, `InMemoryTicketSource`, `InMemoryPublisher`, `NullTracer`; zero
-keys/services/spend, 97 deterministic tests) and the **real path** (real model clients,
+keys/services/spend, 111 deterministic tests) and the **real path** (real model clients,
 Graphiti/Neo4j, JIRA, Atlassian publisher, Langfuse tracing — gated behind the
 `live`/`graph`/`jira`/`observability` extras). Both sit behind the same seams (`ModelClient`,
 `MemoryStore`, `TicketSource`, `Publisher`, `Tracer`), so agent and loop code is identical in
@@ -86,10 +86,11 @@ both — that's decision D11, and the gated parity tests prove it holds.
 | `src/agentic_memory/observability.py` | `Tracer` seam (D18/FR10): `NullTracer` + **`LangfuseTracer`** + `TracingModelClient` wrapper — one Langfuse generation per model call (persona/model/tokens/latency), strictly additive (faults swallowed). `observability` extra. | ✅ Done (Stage 3 #1) |
 | `src/agentic_memory/scenarios.py` | Frozen gate corpus (D19/D9): `Scenario` + markdown-frontmatter loader + fingerprinted `ScenarioSet` + `ScenarioTicketSource` (feeds the loop unchanged). Corpus in `scenarios/`; `scripts/run_scenarios.py` runs it. | ✅ Harness done (Stage 3 #2) |
 | `src/agentic_memory/verdicts.py` | Architect verdict capture (D20/D7): `Verdict` + `VerdictStore` seam (file/in-memory) + `summarize_verdicts()` (accept rate w/ Wilson 95% lower bound). Human-only sink. `scripts/record_verdict.py`; log in `verdicts/`. | ✅ Done (Stage 3 #3) |
+| `src/agentic_memory/eval.py` | Advisory eval (D21/FR9): deterministic `score_traceability` + cross-family LLM `judge_adr` + `cohens_kappa`/`judge_agreement` + `build_eval_report`. Judge is structurally non-gating (gate = human verdicts only); degeneracy-guarded κ. `scripts/run_eval.py`. | ✅ Done (Stage 3 #4) |
 | `src/agentic_memory/agents.py` | `BAAgent` (ticket → `RequirementsArtifact` → memory) and `SAAgent` (memory → `ADR` or clarifications), both over the `ModelClient` + `MemoryStore` seams; prompts carry type-derived JSON schemas (D14). | ✅ Done |
 | `src/agentic_memory/loop.py` | `run_loop` — drives the FSM through `intake → analysis ⇄ clarification → decision (+ escalation)`; the full BA→SA roundtrip, logged and replayable; proven on the full real stack. | ✅ Done |
 
-`97 passed` offline (renderers, fakes, seam pass-through — zero keys/services). Plus four
+`111 passed` offline (renderers, fakes, seam pass-through — zero keys/services). Plus four
 gated opt-in suites, all passing: `-m live` (real provider calls + end-to-end loop), `-m graph`
 (11 tests, `GraphitiMemoryStore` ≡ fake against dockerized Neo4j), `-m jira` (mocked-transport
 + env-gated live fetch/publish), and `-m observability` (Langfuse tracer via injected mock
@@ -218,17 +219,19 @@ assert replay_final_state(log) is fsm.state   # the log replays to identical sta
 │   ├── observability.py     # Tracer seam + LangfuseTracer + TracingModelClient ✅ (D18)
 │   ├── scenarios.py         # frozen gate corpus: ScenarioSet + ScenarioTicketSource ✅ (D19)
 │   ├── verdicts.py          # architect verdict capture + honest gate readout ✅ (D20)
+│   ├── eval.py              # advisory scorers + LLM judge + judge-vs-human κ ✅ (D21)
 │   ├── agents.py            # BAAgent / SAAgent (schema-in-prompt, D14)
 │   └── loop.py              # run_loop — the FSM-driven roundtrip
 ├── scripts/live_demo.py     # one command: ticket → ADR + token usage (+ --graph, --jira, --runs)
 ├── scripts/run_scenarios.py # run the frozen scenario set; prints fingerprint + summary
 ├── scripts/record_verdict.py# record an architect accept/revise/reject verdict
+├── scripts/run_eval.py      # advisory eval dashboard: scores + human gate + judge κ
 ├── verdicts/                # architect verdict log (human-only; none shipped)
 ├── scenarios/               # frozen gate corpus (illustrative examples + D9 boundary README)
 ├── docker-compose.yml       # Neo4j for the real graph store
-├── tests/                   # pytest suite (97 offline + gated live/graph/jira/observability)
+├── tests/                   # pytest suite (111 offline + gated live/graph/jira/observability)
 ├── Plans/                   # design proposals (e.g. graphiti-entity-edge-model.md → D10)
-├── DECISIONS.md             # durable decision log (D1–D20) — read this first
+├── DECISIONS.md             # durable decision log (D1–D21) — read this first
 ├── .env.example             # setup template (spec Appendix A.2)
 ├── pyproject.toml           # uv project; pytest config
 ├── uv.lock                  # pinned deps (committed — NFR6 reproducibility)
@@ -291,9 +294,16 @@ This is the **go/no-go**: does the loop produce ADRs a senior architect actually
    scenario + set fingerprint + ADR; `summarize_verdicts()` gives the honest gate readout (accept
    rate with a Wilson 95% lower bound, reject rate, pass/fail per D7). **Human-only sink** — the
    judge never writes here.
-4. **Advisory eval harness** ← **DO THIS NEXT (last build piece).** Traceability + omission/grounding
-   scorers (the graph already answers omission), an LLM judge, and judge-vs-human κ (≥0.6 before the
-   judge is trusted). All *advisory*, measured **against** the recorded verdicts — never overriding them (NFR4).
+4. **Advisory eval harness** — ✅ **Done (D21, FR9).** `eval.py`: deterministic traceability/omission
+   scorers + a cross-family LLM judge + judge-vs-human Cohen's κ (trusted only at κ≥0.6, n≥10, and
+   non-degenerate). Structurally non-gating — the gate reads human verdicts only; a test proves a
+   hostile judge can't move it. `scripts/run_eval.py` is the dashboard. All *advisory* (NFR4).
+
+**Stage 3's build is complete (D18–D21). The gate is now runnable — what remains is not code:** the
+externally-authored anonymized **scenario corpus** (D9) and the senior architect's real **verdicts**
+(D20), then `run_eval.py` produces the gate result. Past the gate (if it holds, D7) lies V2: the
+evolution layers (L1 persona / L3 skills / L5 episodic + the "dreaming" consolidation engine),
+deferred pending the gate and lab research on consolidation.
 
 **Also queued (not gating):** Miro diagrams in the ADR (the reserved "Diagrams" section, D17).
 
@@ -301,7 +311,7 @@ This is the **go/no-go**: does the loop produce ADRs a senior architect actually
 (conflict resolution, replay verification, V2 interface stubs, honest demo). **Build nothing below
 the gate until it holds** (D7).
 
-**Start here:** read `DECISIONS.md` (D1–D20), run the full round-trip
+**Start here:** read `DECISIONS.md` (D1–D21), run the full round-trip
 (`docker compose up -d && uv run --extra live --extra graph --extra jira python scripts/live_demo.py --graph --jira <KEY> --publish`),
 then pick up Stage 3 step **#1** (Langfuse instrumentation) or **#3** (verdict capture, OD3).
 

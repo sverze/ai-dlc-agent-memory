@@ -453,8 +453,43 @@ boolean per D7); CLI records + prints the readout; agents/loop/etc zero-diff; no
 
 ---
 
+## D21 — Advisory eval harness: machine metrics measured against the human, never gating ✅ (Stage 3 #4, FR9)
+
+**Decision.** `eval.py` implements the three-tier grader model: (A) **deterministic** structured
+scorers (`score_traceability` — omission/traceability over the typed ADR, reusing
+`ADR.omitted_requirement_ids`); (B) an **advisory LLM judge** (`judge_adr`) that emits accept/revise/
+reject + rationale *purely to be scored against the human*; (C) the **human verdict** (D20), primary.
+`build_eval_report` ties them: the gate readout comes from `summarize_verdicts(human_verdicts)` and
+judge-vs-human Cohen's κ is computed only on the human∩judge overlap.
+
+**Advisory is structural, not documentation (D7/NFR4).** `build_eval_report` never passes judge
+output to the gate; the judge never touches the `VerdictStore`. A test proves an all-reject hostile
+judge leaves `meets_gate` unchanged. The judge is type-separated from the gate and test-guarded — not
+"airtight" by promise, but by construction.
+
+**Cross-family judge (D7).** The judge defaults to the BA's Gemini binding — a different family from
+the SA's Claude ADR, so it isn't grading its own family. Reuses the `ModelClient` seam (offline fake /
+real live); temperature 0 (seam default).
+
+**κ honesty (the advisor catch).** `trusted` = κ ≥ 0.6 AND n ≥ 10 AND **not degenerate**. The degeneracy
+guard is the load-bearing fix: if every verdict is the same single category (e.g. all "accept"), κ is
+mathematically 1.0 but proves nothing — the judge never showed it can discriminate. Such a set is never
+trusted. `min_n=10` is the operational floor; κ is only *stable* at ~30+ dual-labels, so 10–30 is read
+with the `insufficient_sample` caution. Single-sample judging (one call per ADR) is a documented V1
+limitation; the judge measures *judge-human agreement*, never "ADR quality" as ground truth.
+
+**Verified:** 111 offline tests (traceability exact, κ edges incl. degeneracy, judge via scripted fake,
+report assembly, and the hostile-judge-can't-move-the-gate invariant). `scripts/run_eval.py` is the live
+dashboard. Frozen modules zero-diff; dep-free (DeepEval/RAGAS deferred).
+
+**This closes the Stage-3 build.** What remains is *not code*: the externally-authored scenario corpus
+(D9) and the architect's real verdicts (D20) — then run the gate (`run_eval.py`) for real.
+
+---
+
 ## Open decisions
 
-- *(none — OD1 resolved by D10, OD2 by D15, OD3 by D20, OD4 by D14.)* Remaining Stage-3 work is
-  tracked in the README "Continuing this work": the advisory eval harness + κ (#4), and — outside the
-  build — sourcing the externally-authored scenario corpus (D9) and architect verdicts (D20).
+- *(none — OD1→D10, OD2→D15, OD3→D20, OD4→D14.)* Stage 3's build is complete (D18/D19/D20/D21).
+  The gate is now *runnable*; what's left is human-sourced: the external corpus + real architect
+  verdicts, then run it. Evolution layers (L1/L3/L5 + the "dreaming" consolidation engine) are V2,
+  gated on the hypothesis holding (D7) and on lab research for the consolidation design.

@@ -74,6 +74,18 @@ from .verdicts import (
     summarize_verdicts,
     wilson_lower_bound,
 )
+from .eval import (
+    EvalReport,
+    JudgeAgreement,
+    JudgeVerdict,
+    TraceabilityScore,
+    build_eval_report,
+    cohens_kappa,
+    judge_adr,
+    judge_agreement,
+    kappa_band,
+    score_traceability,
+)
 from .models import (
     DEFAULT_MODEL_BY_ROLE,
     AnthropicModelClient,
@@ -163,6 +175,17 @@ __all__ = [
     "parse_verdict",
     "summarize_verdicts",
     "wilson_lower_bound",
+    # eval (advisory machine metrics)
+    "EvalReport",
+    "JudgeAgreement",
+    "JudgeVerdict",
+    "TraceabilityScore",
+    "build_eval_report",
+    "cohens_kappa",
+    "judge_adr",
+    "judge_agreement",
+    "kappa_band",
+    "score_traceability",
     # graph (L4 shared memory)
     "DEFAULT_GROUP",
     "EdgeType",
