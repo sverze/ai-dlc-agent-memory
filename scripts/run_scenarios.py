@@ -44,7 +44,35 @@ def _load_dotenv() -> None:
     load_dotenv(ENV_PATH, override=False)
 
 
-def _run_scenario(source: ScenarioTicketSource, scenario_id: str, *, ba_model: str | None) -> dict:
+def _print_adr_for_review(scenario_id: str, art, adr, fingerprint: str) -> None:
+    """Print the full ADR for a human to read, then the ready-to-paste verdict command."""
+    print("\n" + "─" * 72)
+    print(f"📄 REVIEW {scenario_id} — ADR {adr.id}: {adr.title}")
+    print("─" * 72)
+    print(f"  decision : {adr.decision}")
+    print(f"  rationale: {adr.rationale}")
+    print(f"  requirement traceability ({len(adr.requirement_traces)}):")
+    for t in adr.requirement_traces:
+        mark = "✓ addressed" if t.addressed else f"→ deferred ({t.deferred_reason})"
+        print(f"    - {t.requirement_id}: {mark}  {t.how or ''}")
+    if adr.added_constraints:
+        print(f"  architect-added constraints ({len(adr.added_constraints)}):")
+        for c in adr.added_constraints:
+            print(f"    - {c.text}  (why: {c.justification})")
+    omitted = adr.omitted_requirement_ids(art)
+    print(f"  ⚖️  omission check: {omitted if omitted else 'NONE ✅'}")
+    print(f"\n  ▶ YOUR VERDICT — copy, set accept|revise|reject + notes, run it:")
+    print(
+        f"    uv run python scripts/record_verdict.py --scenario {scenario_id} "
+        f"--adr {adr.id} --fingerprint {fingerprint} \\\n"
+        f"        --verdict accept --reviewer \"you\" --notes \"...\""
+    )
+
+
+def _run_scenario(
+    source: ScenarioTicketSource, scenario_id: str, *, ba_model: str | None,
+    review: bool = False, fingerprint: str = "",
+) -> dict:
     override = {AgentPersona.BUSINESS_ANALYST: ba_model} if ba_model else None
     client = make_model_client(model_by_role=override)
     store = InMemoryMemoryStore()
@@ -57,6 +85,8 @@ def _run_scenario(source: ScenarioTicketSource, scenario_id: str, *, ba_model: s
             r = run_loop(ticket, ba=ba, sa=sa, fsm=fsm)
             art = r.artifact
             omitted = r.adr.omitted_requirement_ids(art) if (r.adr and art) else set()
+            if review and r.adr and art:
+                _print_adr_for_review(scenario_id, art, r.adr, fingerprint)
             return {
                 "id": scenario_id, "ok": True,
                 "terminal": r.final_state in TERMINAL_STATES,
@@ -82,6 +112,9 @@ def main() -> int:
     ba_model = None
     if "--ba-model" in args:
         i = args.index("--ba-model"); ba_model = args[i + 1]; del args[i : i + 2]
+    review = "--review" in args  # print each full ADR + a ready-to-paste verdict command
+    if review:
+        args.remove("--review")
 
     scenario_set = load_scenarios(directory)
     source = ScenarioTicketSource(scenario_set)
@@ -117,7 +150,9 @@ def main() -> int:
     results = []
     for sid in scenario_set.ids():
         print(f"  … {sid}")
-        results.append(_run_scenario(source, sid, ba_model=ba_model))
+        results.append(_run_scenario(
+            source, sid, ba_model=ba_model, review=review, fingerprint=scenario_set.fingerprint()
+        ))
 
     print("\n" + "═" * 72)
     print("📊 SUMMARY — the ADRs produced are what an architect then judges")
