@@ -303,7 +303,9 @@ This is the **go/no-go**: does the loop produce ADRs a senior architect actually
 externally-authored anonymized **scenario corpus** (D9) and the senior architect's real **verdicts**
 (D20), then `run_eval.py` produces the gate result. Past the gate (if it holds, D7) lies V2: the
 evolution layers (L1 persona / L3 skills / L5 episodic + the "dreaming" consolidation engine),
-deferred pending the gate and lab research on consolidation.
+deferred pending the gate and lab research on consolidation. **V2 destination is locked in
+[`Plans/v2-memory-evolution-northstar.md`](Plans/v2-memory-evolution-northstar.md)** — the
+human-interaction review loop + the memory-evolution layers, with how each layer's lift gets measured.
 
 **Also queued (not gating):** Miro diagrams in the ADR (the reserved "Diagrams" section, D17).
 
