@@ -27,13 +27,21 @@ from agentic_memory import (  # noqa: E402
     EventLog,
     FSM,
     InMemoryMemoryStore,
+    RunRecord,
     SAAgent,
     ScenarioTicketSource,
     TERMINAL_STATES,
     load_scenarios,
     make_model_client,
+    run_exists,
     run_loop,
+    save_run,
 )
+
+
+def _is_quota_error(exc: Exception) -> bool:
+    s = str(exc)
+    return "429" in s or "RESOURCE_EXHAUSTED" in s or "quota" in s.lower()
 
 
 def _load_dotenv() -> None:
@@ -85,6 +93,11 @@ def _run_scenario(
             r = run_loop(ticket, ba=ba, sa=sa, fsm=fsm)
             art = r.artifact
             omitted = r.adr.omitted_requirement_ids(art) if (r.adr and art) else set()
+            # Persist the run so eval never has to regenerate it (decoupled generate/eval).
+            save_run(RunRecord(
+                scenario_id=scenario_id, set_fingerprint=fingerprint,
+                final_state=str(r.final_state), artifact=art, adr=r.adr,
+            ))
             if review and r.adr and art:
                 _print_adr_for_review(scenario_id, art, r.adr, fingerprint)
             return {
@@ -99,7 +112,11 @@ def _run_scenario(
             if any(s in str(exc) for s in ("503", "UNAVAILABLE", "overload")):
                 time.sleep(6)
                 continue
-            return {"id": scenario_id, "ok": False, "error": f"{type(exc).__name__}: {str(exc)[:100]}"}
+            quota = _is_quota_error(exc)
+            return {
+                "id": scenario_id, "ok": False, "quota": quota,
+                "error": f"{type(exc).__name__}: {str(exc)[:100]}",
+            }
     return {"id": scenario_id, "ok": False, "error": "provider unavailable after retries"}
 
 
@@ -115,6 +132,9 @@ def main() -> int:
     review = "--review" in args  # print each full ADR + a ready-to-paste verdict command
     if review:
         args.remove("--review")
+    force = "--force" in args  # regenerate even scenarios already saved in runs/
+    if force:
+        args.remove("--force")
 
     scenario_set = load_scenarios(directory)
     source = ScenarioTicketSource(scenario_set)
@@ -148,12 +168,25 @@ def main() -> int:
     print("\n" + "═" * 72)
     print("▶️  RUNNING each scenario through the real loop")
     print("═" * 72)
+    fp = scenario_set.fingerprint()
     results = []
     for sid in scenario_set.ids():
+        if not force and run_exists(sid, fp):
+            print(f"  … {sid}  (cached — skipping; --force to regenerate)")
+            results.append({"id": sid, "ok": True, "terminal": True, "state": "cached",
+                            "reqs": "-", "omitted": "-", "adr": True})
+            continue
         print(f"  … {sid}")
-        results.append(_run_scenario(
-            source, sid, ba_model=ba_model, review=review, fingerprint=scenario_set.fingerprint()
-        ))
+        r = _run_scenario(source, sid, ba_model=ba_model, review=review, fingerprint=fp)
+        results.append(r)
+        if r.get("quota"):  # daily free-tier cap won't recover within the run — stop cleanly
+            done = sum(1 for x in results if x.get("ok"))
+            print("\n  " + "!" * 66)
+            print(f"  !! QUOTA EXHAUSTED (429) on {sid}. Stopping — {done} scenario(s) saved to runs/.")
+            print("  !! Re-run after your daily quota resets (or try --ba-model gemini-2.5-flash-lite);")
+            print("  !! already-saved scenarios are skipped, so it resumes where it left off.")
+            print("  " + "!" * 66)
+            break
 
     print("\n" + "═" * 72)
     print("📊 SUMMARY — the ADRs produced are what an architect then judges")

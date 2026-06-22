@@ -16,26 +16,19 @@ from __future__ import annotations
 
 import os
 import sys
-import tempfile
-import time
 from pathlib import Path
 
 ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
 
 from agentic_memory import (  # noqa: E402
     AgentPersona,
-    BAAgent,
-    EventLog,
-    FSM,
-    InMemoryMemoryStore,
-    SAAgent,
-    ScenarioTicketSource,
+    JudgeVerdict,
     build_eval_report,
     judge_adr,
+    load_runs,
     load_scenarios,
     load_verdicts,
     make_model_client,
-    run_loop,
     score_traceability,
 )
 
@@ -48,6 +41,26 @@ def _load_dotenv() -> None:
     load_dotenv(ENV_PATH, override=False)
 
 
+def _judge_cache_path(fingerprint: str, scenario_id: str) -> Path:
+    return Path("runs") / fingerprint / "judge" / f"{scenario_id}.json"
+
+
+def _load_cached_judge(fingerprint: str, scenario_id: str) -> JudgeVerdict | None:
+    p = _judge_cache_path(fingerprint, scenario_id)
+    return JudgeVerdict.model_validate_json(p.read_text()) if p.exists() else None
+
+
+def _save_judge(fingerprint: str, jv: JudgeVerdict) -> None:
+    p = _judge_cache_path(fingerprint, jv.scenario_id)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(jv.model_dump_json(indent=2), encoding="utf-8")
+
+
+def _is_quota_error(exc: Exception) -> bool:
+    s = str(exc)
+    return "429" in s or "RESOURCE_EXHAUSTED" in s or "quota" in s.lower()
+
+
 def main() -> int:
     _load_dotenv()
     args = sys.argv[1:]
@@ -56,10 +69,10 @@ def main() -> int:
     ba_model = args[args.index("--ba-model") + 1] if "--ba-model" in args else None
 
     scenario_set = load_scenarios(scen_dir)
-    source = ScenarioTicketSource(scenario_set)
+    fp = scenario_set.fingerprint()
+    runs = load_runs(fp)  # ADRs generated + persisted by run_scenarios.py — NOT regenerated here
     try:
-        human_verdicts = [v for v in load_verdicts(verdict_dir)
-                          if v.set_fingerprint == scenario_set.fingerprint()]
+        human_verdicts = [v for v in load_verdicts(verdict_dir) if v.set_fingerprint == fp]
     except FileNotFoundError:
         human_verdicts = []
 
@@ -69,46 +82,46 @@ def main() -> int:
     print("═" * 72)
     print("🧮 ADVISORY EVAL — scores are advisory; the gate is the HUMAN verdict (D7)")
     print("═" * 72)
-    print(f"  set fingerprint: {scenario_set.fingerprint()}")
-    print(f"  scenarios: {len(scenario_set)}   human verdicts on this set: {len(human_verdicts)}")
+    print(f"  set fingerprint: {fp}")
+    print(f"  stored ADRs: {len(runs)}   human verdicts on this set: {len(human_verdicts)}")
     if not_real:
         srcs = sorted({s.source for s in scenario_set if s.source in _SYNTHETIC})
         print(f"  ⚠️  NON-GATE corpus ({', '.join(srcs)}) — this is a DRESS REHEARSAL, not a valid")
         print("      hypothesis gate (D9). A real result needs an externally-authored, anonymized corpus.")
 
-    if not os.getenv("ANTHROPIC_API_KEY"):
-        print("\n  (no ANTHROPIC_API_KEY — set keys in .env to run the loop + judge)")
-        return 0
+    if not runs:
+        print("\n  No stored ADRs for this set — generate them first (cheap to resume):")
+        print("    uv run --extra live python scripts/run_scenarios.py")
+        return 1
 
+    # Score (free) + judge (1 model call each, cached). NO loop regeneration here.
     override = {AgentPersona.BUSINESS_ANALYST: ba_model} if ba_model else None
+    client = make_model_client(model_by_role=override) if os.getenv("ANTHROPIC_API_KEY") else None
     traceability, judge_verdicts = [], []
-    for sid in scenario_set.ids():
-        print(f"  … {sid}")
-        client = make_model_client(model_by_role=override)
-        store = InMemoryMemoryStore()
-        ba, sa = BAAgent(client, store), SAAgent(client, store)
-        fsm = FSM(EventLog(Path(tempfile.mkdtemp()) / "e.jsonl"))
+    for sid, rec in runs.items():
+        if not (rec.artifact and rec.adr):
+            continue
+        traceability.append(score_traceability(rec.artifact, rec.adr, scenario_id=sid))
+        cached = _load_cached_judge(fp, sid)
+        if cached is not None:
+            judge_verdicts.append(cached)
+            print(f"  … {sid}  (judge cached)")
+            continue
+        if client is None:
+            continue  # no keys → structured scores only, skip judging
+        print(f"  … {sid}  (judging)")
         try:
-            result = None
-            for _ in range(3):
-                try:
-                    result = run_loop(source.fetch(sid), ba=ba, sa=sa, fsm=fsm)
-                    break
-                except Exception as exc:
-                    if any(s in str(exc) for s in ("503", "UNAVAILABLE", "overload")):
-                        time.sleep(6); continue
-                    raise
-            if result is None:
-                print(f"      ⚠️ {sid} skipped: provider unavailable after retries")
-            elif result.artifact and result.adr:
-                traceability.append(score_traceability(result.artifact, result.adr, scenario_id=sid))
-                judge_verdicts.append(judge_adr(client, result.artifact, result.adr, scenario_id=sid))
+            jv = judge_adr(client, rec.artifact, rec.adr, scenario_id=sid)
+            _save_judge(fp, jv)
+            judge_verdicts.append(jv)
         except Exception as exc:
-            print(f"      ⚠️ {sid} failed: {type(exc).__name__}: {str(exc)[:80]}")
+            if _is_quota_error(exc):
+                print(f"\n  ⚠️ QUOTA EXHAUSTED (429) judging {sid}. Stopping — judged verdicts are cached.")
+                print("     Re-run after reset (or --ba-model gemini-2.5-flash-lite); it resumes from the cache.")
+                break
+            print(f"      ⚠️ {sid} judge failed: {type(exc).__name__}: {str(exc)[:80]}")
 
-    report = build_eval_report(
-        traceability, human_verdicts, judge_verdicts, set_fingerprint=scenario_set.fingerprint()
-    )
+    report = build_eval_report(traceability, human_verdicts, judge_verdicts, set_fingerprint=fp)
 
     print("\n" + "═" * 72)
     print("📊 REPORT")

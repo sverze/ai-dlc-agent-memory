@@ -40,3 +40,6 @@ Thumbs.db
 # Local service data (Neo4j / Langfuse / Graphiti scratch)
 data/
 *.log
+
+# Persisted loop outputs / judge cache (regenerable; runs.py)
+runs/

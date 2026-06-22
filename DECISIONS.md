@@ -510,7 +510,21 @@ these, reviewed by an independent senior architect (D7). When that lands, it sim
 
 ---
 
-## Open decisions
+## D23 — Decouple generation from evaluation; resilient to free-tier quota ✅ (2026-06-22)
+
+**Decision.** `run_eval.py` no longer regenerates ADRs — it was re-running the full BA→SA loop *and*
+the judge for all scenarios every time, blowing Gemini's daily free-tier cap (the judge competes with
+the BA on the same Gemini bucket). Now: `run_scenarios.py` **persists** each run's artifact+ADR via
+`runs.py` (`RunRecord` → `runs/<fingerprint>/<scenario>.json`, gitignored), and `run_eval.py` **reads**
+those + runs only the judge (cached to `runs/<fp>/judge/`). Effect: eval drops from ~3 Gemini calls/
+scenario to ~1, and a re-run costs ~0.
+
+**Resilience.** Both runners **skip already-done work** (generation skips saved scenarios unless
+`--force`; eval skips cached judge verdicts) and **stop cleanly on a 429/RESOURCE_EXHAUSTED** with
+resume guidance, instead of plowing on and failing every remaining scenario. So a free-tier quota wall
+costs nothing already done — re-run after reset (or `--ba-model gemini-2.5-flash-lite` for a separate
+bucket) and it resumes. Workflow is now: `run_scenarios.py` (generate once, persisted) → record verdicts
+→ `run_eval.py` (judge + score, cheap/resumable).
 
 - *(none — OD1→D10, OD2→D15, OD3→D20, OD4→D14.)* Stage 3's build is complete (D18/D19/D20/D21).
   The gate is now *runnable*; what's left is human-sourced: the external corpus + real architect

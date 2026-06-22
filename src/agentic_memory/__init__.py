@@ -86,6 +86,7 @@ from .eval import (
     kappa_band,
     score_traceability,
 )
+from .runs import RunRecord, load_runs, run_exists, save_run
 from .models import (
     DEFAULT_MODEL_BY_ROLE,
     AnthropicModelClient,
@@ -186,6 +187,11 @@ __all__ = [
     "judge_agreement",
     "kappa_band",
     "score_traceability",
+    # runs (persisted loop output — decouples generate/eval)
+    "RunRecord",
+    "load_runs",
+    "run_exists",
+    "save_run",
     # graph (L4 shared memory)
     "DEFAULT_GROUP",
     "EdgeType",
