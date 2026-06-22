@@ -96,6 +96,30 @@ _HAVE_ENV = bool(
 )
 
 
+def test_search_returns_keys():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/rest/api/3/search/jql"
+        assert "labels" in request.url.params["jql"]
+        return httpx.Response(200, json={"issues": [{"key": "PROJ-1"}, {"key": "PROJ-2"}]})
+
+    keys = _source_with(handler).search('labels = "ai-dlc" AND labels != "ai-dlc-done"')
+    assert keys == ["PROJ-1", "PROJ-2"]
+
+
+def test_add_label_puts_update():
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+        seen["path"] = request.url.path
+        seen["body"] = json.loads(request.content)
+        return httpx.Response(204)
+
+    _source_with(handler).add_label("PROJ-1", "ai-dlc-done")
+    assert seen["path"] == "/rest/api/3/issue/PROJ-1"
+    assert seen["body"] == {"update": {"labels": [{"add": "ai-dlc-done"}]}}
+
+
 @pytest.mark.skipif(not _HAVE_ENV, reason="ATLASSIAN_* env not set")
 def test_live_fetch_real_ticket():
     """Fetches the ticket named in JIRA_TEST_TICKET (default SCRUM-1) from the real site."""

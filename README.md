@@ -89,8 +89,9 @@ both — that's decision D11, and the gated parity tests prove it holds.
 | `src/agentic_memory/eval.py` | Advisory eval (D21/FR9): deterministic `score_traceability` + cross-family LLM `judge_adr` + `cohens_kappa`/`judge_agreement` + `build_eval_report`. Judge is structurally non-gating (gate = human verdicts only); degeneracy-guarded κ. `scripts/run_eval.py`. | ✅ Done (Stage 3 #4) |
 | `src/agentic_memory/agents.py` | `BAAgent` (ticket → `RequirementsArtifact` → memory) and `SAAgent` (memory → `ADR` or clarifications), both over the `ModelClient` + `MemoryStore` seams; prompts carry type-derived JSON schemas (D14). | ✅ Done |
 | `src/agentic_memory/loop.py` | `run_loop` — drives the FSM through `intake → analysis ⇄ clarification → decision (+ escalation)`; the full BA→SA roundtrip, logged and replayable; proven on the full real stack. | ✅ Done |
+| `src/agentic_memory/pipeline.py` | `process_ticket()` — the one reusable end-to-end path (fetch ticket → loop → publish requirements + ADR), composing every seam + tracing, returning a `PipelineResult`. A CLI, the poller, or a webhook all call this (D24). Memory namespaced by ticket key. | ✅ Done (integration) |
 
-`111 passed` offline (renderers, fakes, seam pass-through — zero keys/services). Plus four
+`117 passed` offline (renderers, fakes, seam pass-through — zero keys/services). Plus four
 gated opt-in suites, all passing: `-m live` (real provider calls + end-to-end loop), `-m graph`
 (11 tests, `GraphitiMemoryStore` ≡ fake against dockerized Neo4j), `-m jira` (mocked-transport
 + env-gated live fetch/publish), and `-m observability` (Langfuse tracer via injected mock
@@ -152,6 +153,21 @@ table** — the join an architect reviews — plus a Miro-diagram placeholder an
 verdict" section. No one needs Neo4j or a terminal: they open the ticket, follow the link, judge
 the ADR. Needs Confluence enabled on the site; set `CONFLUENCE_SPACE_KEY` to target a space
 (otherwise the first space is used — the printed page URL shows which).
+
+**Running it against the live backlog (the poller, D24).** `live_demo.py` does one named ticket;
+`serve_jira.py` is the "plug into the workforce" entry point — a human flags a ticket for the swarm
+by adding the **`ai-dlc` label**, and the poller picks it up, runs it end-to-end, publishes back, and
+labels it `ai-dlc-done` so it isn't reprocessed:
+
+```bash
+uv run --extra live --extra graph --extra jira python scripts/serve_jira.py            # one sweep
+uv run --extra live --extra graph --extra jira python scripts/serve_jira.py --watch 120 # poll every 120s
+```
+
+The trigger/done labels are configurable (`AIDLC_TRIGGER_LABEL` / `AIDLC_DONE_LABEL`). It's
+quota-aware: a 429 stops the sweep *without* marking the ticket done, so it resumes after the daily
+reset. The swarm only **drafts** — the architect still reviews and decides on the Confluence page;
+nothing here makes an irreversible call on the work itself.
 
 To send **per-agent metrics to Langfuse**, you need the `observability` extra and Langfuse keys
 (`LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, `LANGFUSE_HOST` — see `.env.example`):
@@ -221,17 +237,19 @@ assert replay_final_state(log) is fsm.state   # the log replays to identical sta
 │   ├── verdicts.py          # architect verdict capture + honest gate readout ✅ (D20)
 │   ├── eval.py              # advisory scorers + LLM judge + judge-vs-human κ ✅ (D21)
 │   ├── agents.py            # BAAgent / SAAgent (schema-in-prompt, D14)
-│   └── loop.py              # run_loop — the FSM-driven roundtrip
+│   ├── loop.py              # run_loop — the FSM-driven roundtrip
+│   └── pipeline.py          # process_ticket — reusable end-to-end path (ticket→loop→publish) ✅ (D24)
 ├── scripts/live_demo.py     # one command: ticket → ADR + token usage (+ --graph, --jira, --runs)
+├── scripts/serve_jira.py    # background poller: ai-dlc-labelled tickets → process_ticket → publish ✅ (D24)
 ├── scripts/run_scenarios.py # run the frozen scenario set; prints fingerprint + summary
 ├── scripts/record_verdict.py# record an architect accept/revise/reject verdict
 ├── scripts/run_eval.py      # advisory eval dashboard: scores + human gate + judge κ
 ├── verdicts/                # architect verdict log (human-only; none shipped)
 ├── scenarios/               # frozen gate corpus (illustrative examples + D9 boundary README)
 ├── docker-compose.yml       # Neo4j for the real graph store
-├── tests/                   # pytest suite (111 offline + gated live/graph/jira/observability)
+├── tests/                   # pytest suite (117 offline + gated live/graph/jira/observability)
 ├── Plans/                   # design proposals (e.g. graphiti-entity-edge-model.md → D10)
-├── DECISIONS.md             # durable decision log (D1–D22) — read this first
+├── DECISIONS.md             # durable decision log (D1–D24) — read this first
 ├── .env.example             # setup template (spec Appendix A.2)
 ├── pyproject.toml           # uv project; pytest config
 ├── uv.lock                  # pinned deps (committed — NFR6 reproducibility)

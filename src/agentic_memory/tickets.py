@@ -154,3 +154,28 @@ class JiraTicketSource(TicketSource):
         description = adf_to_text(fields.get("description"))
         body = f"{summary}\n\n{description}".strip() if description else summary
         return TicketInput(id=key, body=body)
+
+    def search(self, jql: str, *, max_results: int = 50) -> list[str]:
+        """Return ticket keys matching a JQL query — the trigger query for the poller.
+
+        e.g. ``labels = "ai-dlc" AND labels != "ai-dlc-done"`` to find tickets a human has
+        flagged for the swarm but that haven't been processed yet.
+        """
+        resp = self._client.get(
+            "/rest/api/3/search/jql",
+            params={"jql": jql, "maxResults": max_results, "fields": "key"},
+        )
+        if resp.status_code == 400:
+            raise RuntimeError(f"JIRA search rejected the JQL: {resp.text[:200]}")
+        if resp.status_code != 200:
+            raise RuntimeError(f"JIRA search failed ({resp.status_code}): {resp.text[:200]}")
+        return [issue["key"] for issue in resp.json().get("issues", [])]
+
+    def add_label(self, key: str, label: str) -> None:
+        """Add a label to an issue (e.g. mark it ``ai-dlc-done`` so it isn't reprocessed)."""
+        resp = self._client.put(
+            f"/rest/api/3/issue/{key}",
+            json={"update": {"labels": [{"add": label}]}},
+        )
+        if resp.status_code not in (200, 204):
+            raise RuntimeError(f"JIRA add_label failed ({resp.status_code}): {resp.text[:200]}")

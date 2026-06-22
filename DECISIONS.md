@@ -530,3 +530,31 @@ bucket) and it resumes. Workflow is now: `run_scenarios.py` (generate once, pers
   The gate is now *runnable*; what's left is human-sourced: the external corpus + real architect
   verdicts, then run it. Evolution layers (L1/L3/L5 + the "dreaming" consolidation engine) are V2,
   gated on the hypothesis holding (D7) and on lab research for the consolidation design.
+
+## D24 — Start integrating toward a real-ecosystem trial (the gate was over-applied) ✅ (2026-06-22)
+
+**Decision / correction.** "Build nothing below the gate" (D7) was about not stacking the V2
+*evolution layers* (L1/L3/L5, the dreaming engine) on an unproven loop — it was being wrongly used to
+block **integration toward real use**. Getting the system into a shape real BAs/architects can use in
+their own toolchain is precisely *how* the real corpus + verdicts get produced. The clean statistical
+verdict gates the *evolution*, not the *plumbing*. So we start plugging it into JIRA/Confluence now.
+
+**Built (orchestration + a background trigger):**
+- `pipeline.py` — `process_ticket(key, *, source, model_client, store, publisher, tracer)`: the one
+  reusable end-to-end path (fetch ticket → BA→SA loop → publish requirements + ADR), composing the
+  existing seams + tracing and returning a `PipelineResult`. A CLI, a poller, or a webhook all call
+  this; "plug in" = wiring triggers around it, not new core logic. Memory is namespaced by ticket key.
+- `tickets.py` (additive, agent/loop/model/graph core untouched): `JiraTicketSource.search(jql)` and
+  `add_label(key, label)` — find trigger tickets, mark them processed.
+- `scripts/serve_jira.py` — a **background poller**: finds tickets a human labelled `ai-dlc` (not yet
+  `ai-dlc-done`) via JQL, runs each through `process_ticket`, publishes back to JIRA/Confluence, labels
+  done. `--watch N` polls on an interval; `--graph` uses Graphiti. Quota-aware: on 429 it stops the
+  sweep *without* marking done, so it resumes after reset. Humans stay in the loop — the swarm DRAFTS,
+  the architect reviews & decides in-tool; nothing here makes an irreversible call on the work.
+
+**Tests.** 3 offline end-to-end tests (`test_pipeline.py`, all fakes) + 2 mocked JIRA tests
+(`search`, `add_label`). 117 offline + 12 jira-mocked green; frozen agent/loop/model/graph zero-diff.
+
+**Next, toward the trial (not yet built):** Miro output adapter (once Miro creds land), the SA↔human
+conversational review loop (north-star A), paid model tiers (free-tier quota won't sustain a pilot),
+then a shadow-mode pilot on a real team. A webhook trigger is a later alternative to the poller.

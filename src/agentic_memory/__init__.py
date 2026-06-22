@@ -87,6 +87,7 @@ from .eval import (
     score_traceability,
 )
 from .runs import RunRecord, load_runs, run_exists, save_run
+from .pipeline import PipelineResult, process_ticket
 from .models import (
     DEFAULT_MODEL_BY_ROLE,
     AnthropicModelClient,
@@ -192,6 +193,9 @@ __all__ = [
     "load_runs",
     "run_exists",
     "save_run",
+    # pipeline (end-to-end orchestration: ticket → loop → publish)
+    "PipelineResult",
+    "process_ticket",
     # graph (L4 shared memory)
     "DEFAULT_GROUP",
     "EdgeType",
