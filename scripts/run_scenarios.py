@@ -119,9 +119,9 @@ def main() -> int:
     scenario_set = load_scenarios(directory)
     source = ScenarioTicketSource(scenario_set)
 
-    all_illustrative = len(scenario_set) > 0 and all(
-        s.source == "illustrative" for s in scenario_set
-    )
+    # Any non-real provenance means this is NOT a valid gate corpus (D9).
+    _SYNTHETIC = {"illustrative", "draft-candidate", "synthetic-dry-run"}
+    not_real = len(scenario_set) > 0 and any(s.source in _SYNTHETIC for s in scenario_set)
 
     print("═" * 72)
     print("🧪 FROZEN SCENARIO SET")
@@ -132,12 +132,13 @@ def main() -> int:
     non_anon = [s.id for s in scenario_set if not s.anonymized]
     if non_anon:
         print(f"  ⚠️  NOT anonymized (must not happen for real data, D9): {non_anon}")
-    if all_illustrative:
+    if not_real:
+        srcs = sorted({s.source for s in scenario_set if s.source in _SYNTHETIC})
         print()
         print("  " + "!" * 66)
-        print("  !! ILLUSTRATIVE SET — NOT A VALID GATE CORPUS (D9).")
-        print("  !! This run demonstrates the harness. It is NOT a gate verdict —")
-        print("  !! the gate requires an EXTERNALLY-AUTHORED, anonymized corpus.")
+        print(f"  !! NON-GATE SET ({', '.join(srcs)}) — NOT A VALID GATE CORPUS (D9).")
+        print("  !! This run demonstrates the harness / is a dress rehearsal. It is NOT a")
+        print("  !! gate verdict — the gate requires an EXTERNALLY-AUTHORED, anonymized corpus.")
         print("  " + "!" * 66)
 
     if not os.getenv("ANTHROPIC_API_KEY"):
@@ -165,8 +166,8 @@ def main() -> int:
             print(f"  {r['id']} [{src}]: ❌ {r['error']}")
     ok = sum(1 for r in results if r.get("ok") and r.get("terminal"))
     print(f"  terminal: {ok}/{len(results)}   |   set fingerprint: {scenario_set.fingerprint()[:12]}…")
-    if all_illustrative:
-        print("  ⚠️  ILLUSTRATIVE run — NOT a gate result (D9): the corpus is placeholder, not external.")
+    if not_real:
+        print("  ⚠️  NON-GATE run — NOT a gate result (D9): the corpus is synthetic/illustrative, not external.")
     return 0 if ok == len(results) else 1
 
 

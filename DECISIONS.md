@@ -487,6 +487,29 @@ dashboard. Frozen modules zero-diff; dep-free (DeepEval/RAGAS deferred).
 
 ---
 
+## D22 — `scenarios/` currently holds a SYNTHETIC dry-run corpus (not the gate) ⚠️ (2026-06-22)
+
+**Decision.** At the principal's request, Coco took BA/PM personas to strengthen the 15 candidate
+drafts and promote them into `scenarios/` (SCEN-101–115), so the full human-in-the-loop pipeline can
+be exercised on a realistic-sized set without waiting to recruit an external author. The 3 illustrative
+placeholders and the `candidate-scenarios/` staging dir were removed (graduated/superseded).
+
+**Honesty boundary (the line not crossed).** These are **AI-authored**, so their provenance is
+truthful: `source: synthetic-dry-run`, `author: Coco (AI BA/PM persona)`, `anonymized: true`
+(synthetic → no real PII). **Provenance was NOT faked** — they are *not* labelled as anonymized real
+delivery work, because Coco has no real delivery data and a fabricated "real" source is exactly the
+dishonesty D9 exists to prevent. A run against this set is a **dress rehearsal, not a hypothesis gate**;
+`run_scenarios.py` and `run_eval.py` both detect synthetic sources and print a loud NON-GATE warning,
+and `scenarios/README.md` says so plainly.
+
+**What this is good for / not.** Good for: exercising BA→graph→SA→ADR→review→verdict→eval end-to-end on
+~15 varied tickets, and (with real human verdicts) seeing the gate readout mechanics. NOT valid as: the
+V1 hypothesis result — that still requires an externally-authored, anonymized corpus (D9) replacing
+these, reviewed by an independent senior architect (D7). When that lands, it simply overwrites
+`scenarios/` with truthful provenance and the gate is run for real.
+
+---
+
 ## Open decisions
 
 - *(none — OD1→D10, OD2→D15, OD3→D20, OD4→D14.)* Stage 3's build is complete (D18/D19/D20/D21).

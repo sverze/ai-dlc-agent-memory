@@ -63,11 +63,18 @@ def main() -> int:
     except FileNotFoundError:
         human_verdicts = []
 
+    _SYNTHETIC = {"illustrative", "draft-candidate", "synthetic-dry-run"}
+    not_real = any(s.source in _SYNTHETIC for s in scenario_set)
+
     print("═" * 72)
     print("🧮 ADVISORY EVAL — scores are advisory; the gate is the HUMAN verdict (D7)")
     print("═" * 72)
     print(f"  set fingerprint: {scenario_set.fingerprint()}")
     print(f"  scenarios: {len(scenario_set)}   human verdicts on this set: {len(human_verdicts)}")
+    if not_real:
+        srcs = sorted({s.source for s in scenario_set if s.source in _SYNTHETIC})
+        print(f"  ⚠️  NON-GATE corpus ({', '.join(srcs)}) — this is a DRESS REHEARSAL, not a valid")
+        print("      hypothesis gate (D9). A real result needs an externally-authored, anonymized corpus.")
 
     if not os.getenv("ANTHROPIC_API_KEY"):
         print("\n  (no ANTHROPIC_API_KEY — set keys in .env to run the loop + judge)")
