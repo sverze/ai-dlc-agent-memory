@@ -594,3 +594,15 @@ project's Model Garden — `DEFAULT_VERTEX_MODEL_BY_ROLE` is the configurable de
   the poller/webhook on **Cloud Run** for the pilot; (3) study Agent Engine's memory bank as input to
   the V2 memory-evolution plan; (4) port to Agent Engine's runtime once the gate holds and the enterprise
   mandate bites. The seam design means each step is swap-not-rewrite.
+
+**Quota gotcha + 429 resilience (2026-06-23).** First live Vertex run (`cloud-coco-2fbfe4`, Opus 4.8)
+proved the path with an isolated probe: **BA Gemini@vertex returns OK; SA Opus@vertex 429s** with
+*"Quota exceeded for `aiplatform.googleapis.com/global_online_prediction_requests_per_base_model` with
+base model: anthropic-claude…"*. Auth, model id, and region are all correct (a 429, not a 404) — the
+sole blocker is that a newly-enabled partner model on a fresh project has ~0 provisioned online-prediction
+quota until an increase is granted (Console → Quotas → Vertex AI API → that metric, region `global`).
+Resilience added (`src/agentic_memory/retry.py`): `call_with_backoff` + `is_quota_error`/`is_overload_error`
+classify 429/RESOURCE_EXHAUSTED and 503/UNAVAILABLE/overload; `live_demo.py` now backs off exponentially
+on both (6→12→24s) and surfaces a clear quota message instead of dying on the first 429; `serve_jira.py`
+does a bounded per-ticket retry before its clean stop. A hard zero-quota 429 still won't clear by retry —
+that needs the console increase — but DSQ/throughput throttling now rides out. 7 offline retry tests.

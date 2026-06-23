@@ -87,6 +87,12 @@ from .eval import (
     score_traceability,
 )
 from .runs import RunRecord, load_runs, run_exists, save_run
+from .retry import (
+    call_with_backoff,
+    is_overload_error,
+    is_quota_error,
+    is_retryable,
+)
 from .pipeline import PipelineResult, process_ticket
 from .models import (
     DEFAULT_MODEL_BY_ROLE,
@@ -197,6 +203,11 @@ __all__ = [
     "load_runs",
     "run_exists",
     "save_run",
+    # retry (transient-provider backoff: 429/503 classification)
+    "call_with_backoff",
+    "is_overload_error",
+    "is_quota_error",
+    "is_retryable",
     # pipeline (end-to-end orchestration: ticket → loop → publish)
     "PipelineResult",
     "process_ticket",

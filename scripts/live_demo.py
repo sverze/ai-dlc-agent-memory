@@ -54,6 +54,8 @@ from agentic_memory import (
     SAAgent,
     TERMINAL_STATES,
     TicketInput,
+    call_with_backoff,
+    is_quota_error,
     make_model_client,
     run_loop,
 )
@@ -126,29 +128,31 @@ def _run_once(
     stats: dict = {"ok": False, "error": None}
     started = time.monotonic()
     try:
-        result = None
         # One Langfuse trace per run; model-call generations nest under it.
         with tracer.run(name=f"dlc-run:{ticket.id}", ticket_id=ticket.id, group_id=group):
-            for attempt in range(4):  # transient provider 5xx happen; retry a few times
-                try:
-                    result = run_loop(ticket, ba=ba, sa=sa, fsm=fsm, group_id=group)
-                    break
-                except Exception as exc:
-                    if any(s in str(exc) for s in ("503", "UNAVAILABLE", "overload")):
-                        if verbose:
-                            print(f"  … provider busy (attempt {attempt + 1}), retrying")
-                        time.sleep(6)
-                        continue
-                    raise
-        if result is None:
-            stats["error"] = "provider unavailable after retries"
-            return stats
+            def _note(n: int, delay: float, exc: Exception) -> None:  # transient backoff log
+                if verbose:
+                    kind = "quota/429" if is_quota_error(exc) else "provider busy"
+                    print(f"  … {kind} (attempt {n}) — backing off {delay:.0f}s")
+
+            # Transient 503/overload AND 429/throttle back off (exp: 6→12→24s); a hard
+            # zero-quota 429 simply exhausts and surfaces below with a clear message.
+            result = call_with_backoff(
+                lambda: run_loop(ticket, ba=ba, sa=sa, fsm=fsm, group_id=group),
+                attempts=4, base_delay=6.0, on_retry=_note,
+            )
     except ValidationError as exc:
         # The D14 reliability gap made measurable: model output failed the schema.
         stats["error"] = f"schema-parse failure: {str(exc).splitlines()[0]}"
         return stats
     except Exception as exc:
-        stats["error"] = f"{type(exc).__name__}: {str(exc)[:120]}"
+        if is_quota_error(exc):
+            stats["error"] = (
+                "quota (429) after retries — request a Vertex quota increase for the Claude "
+                "base model (region 'global') or wait for DSQ; see Plans/silly-wishing-newt.md"
+            )
+        else:
+            stats["error"] = f"{type(exc).__name__}: {str(exc)[:120]}"
         return stats
     finally:
         stats["wall_s"] = time.monotonic() - started

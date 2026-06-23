@@ -29,6 +29,8 @@ from agentic_memory import (  # noqa: E402
     GraphitiMemoryStore,
     InMemoryMemoryStore,
     JiraTicketSource,
+    call_with_backoff,
+    is_quota_error,
     make_model_client,
     make_publisher,
     make_tracer,
@@ -44,11 +46,6 @@ def _load_dotenv() -> None:
     load_dotenv(ENV_PATH, override=False)
 
 
-def _is_quota_error(exc: Exception) -> bool:
-    s = str(exc)
-    return "429" in s or "RESOURCE_EXHAUSTED" in s or "quota" in s.lower()
-
-
 def _sweep(*, jira, use_graph: bool, ba_model: str | None, provider: str | None) -> int:
     from agentic_memory import AgentPersona
 
@@ -62,13 +59,23 @@ def _sweep(*, jira, use_graph: bool, ba_model: str | None, provider: str | None)
     processed = 0
     for key in keys:
         print(f"  ▶ {key}")
-        store = GraphitiMemoryStore() if use_graph else InMemoryMemoryStore()
-        try:
-            res = process_ticket(
+
+        def _attempt():
+            # Fresh store/client per attempt so a retried run never half-writes twice.
+            store = GraphitiMemoryStore() if use_graph else InMemoryMemoryStore()
+            return process_ticket(
                 key, source=jira,
                 model_client=make_model_client(provider=provider, model_by_role=override),
                 store=store, publisher=make_publisher(), tracer=make_tracer(),
             )
+
+        def _note(n: int, delay: float, exc: Exception) -> None:
+            kind = "quota/429" if is_quota_error(exc) else "overload"
+            print(f"      … transient {kind} on {key} (attempt {n}) — backing off {delay:.0f}s")
+
+        try:
+            # Bounded per-ticket backoff rides out transient throttling (Vertex DSQ / 503).
+            res = call_with_backoff(_attempt, attempts=3, base_delay=6.0, on_retry=_note)
             print(f"      {res.final_state}: reqs={res.requirements_count} omitted={res.omitted_count} "
                   f"adr={'published' if res.adr_ref else 'none'}")
             if res.adr_ref:
@@ -76,8 +83,9 @@ def _sweep(*, jira, use_graph: bool, ba_model: str | None, provider: str | None)
             jira.add_label(key, done)  # mark processed so the next sweep skips it
             processed += 1
         except Exception as exc:
-            if _is_quota_error(exc):
-                print(f"      ⚠️ quota exhausted on {key} — stopping sweep; resume after reset (label not set, so it retries).")
+            if is_quota_error(exc):
+                print(f"      ⚠️ quota persists on {key} after retries — stopping sweep; resume after a "
+                      f"quota increase / reset (not marked done, so it retries).")
                 break
             print(f"      ⚠️ {key} failed: {type(exc).__name__}: {str(exc)[:120]} (not marked done — will retry)")
     return processed
