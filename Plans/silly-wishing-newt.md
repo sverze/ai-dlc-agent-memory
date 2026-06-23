@@ -91,3 +91,40 @@ dying on the first one.
   edit is needed.
 - The 429-vs-404 signal already rules out a model-id problem, so `VERTEX_SA_MODEL=claude-opus-4-8`
   stays as-is.
+
+---
+
+## Status (2026-06-23)
+
+Vertex integration is **functionally complete and committed** (D25): `VertexAnthropic/Gemini` clients,
+`make_model_client(provider="vertex")`, `--vertex` flag, env-overridable model ids, and `retry.py`
+backoff. Live probe confirms **BA Gemini@vertex works**; **SA Opus@vertex is 429-blocked only by quota**
+(`base_model: anthropic-claude-opus`, region `global`). Quota increase **requested, pending Google's
+email approval**. Auth (ADC), model id, and region are all correct. 135 offline tests green.
+
+## Next steps (post-Vertex integration)
+
+Ordered by dependency. The through-line: GCP work is **pilot enablement**, not the gate — the V1
+acceptance hypothesis is still the critical path.
+
+1. **Unblock + first real Vertex ADR (immediate, on quota grant).** When the approval email lands:
+   re-run the probe, then the full loop —
+   `uv run --extra vertex --extra jira python scripts/live_demo.py --jira SCRUM-5 --vertex` — and
+   confirm a terminal ADR (Gemini BA + Opus SA, both on Vertex). First end-to-end run on the enterprise
+   model plane. If it still 429s immediately after grant, the model is DSQ-only → the `retry.py` backoff
+   is the real fix and a re-run rides it out.
+2. **Cloud Run hosting (D25 step 2).** Containerize the poller/webhook so a pilot team hits an
+   always-on service, not a laptop. Switch from personal ADC to a **service account** with
+   `roles/aiplatform.user`. Prefer a **JIRA-webhook → Cloud Run → `process_ticket`** trigger over
+   polling for production (lower latency, no idle cost). `process_ticket` already is the single entry
+   point, so this is wiring, not new core.
+3. **The real V1 gate (still the critical path, unchanged by GCP).** Externally-authored, anonymized
+   scenario corpus (D9) replacing the synthetic dry-run set, + real senior-architect verdicts (D20) →
+   `run_eval.py` produces the go/no-go. Vertex/hosting just make a real pilot *possible*; they don't
+   move the accept-rate.
+4. **Pilot-enablement loose ends (parallel, non-gating).** Miro diagram adapter once creds land (the
+   reserved ADR "Diagrams" slot, D17); the **SA↔human conversational review loop** (north-star A in
+   `v2-memory-evolution-northstar.md`) so an architect can revise an ADR and the swarm responds.
+5. **Agent Engine (deferred until the gate holds + mandate bites, D25 step 4).** Study Agent Engine's
+   session/memory bank as input to the V2 memory-evolution layers (L1/L3/L5); port the runtime onto
+   Agent Engine only once V1 is validated. The seam design keeps this swap-not-rewrite.

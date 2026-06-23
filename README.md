@@ -90,8 +90,9 @@ both — that's decision D11, and the gated parity tests prove it holds.
 | `src/agentic_memory/agents.py` | `BAAgent` (ticket → `RequirementsArtifact` → memory) and `SAAgent` (memory → `ADR` or clarifications), both over the `ModelClient` + `MemoryStore` seams; prompts carry type-derived JSON schemas (D14). | ✅ Done |
 | `src/agentic_memory/loop.py` | `run_loop` — drives the FSM through `intake → analysis ⇄ clarification → decision (+ escalation)`; the full BA→SA roundtrip, logged and replayable; proven on the full real stack. | ✅ Done |
 | `src/agentic_memory/pipeline.py` | `process_ticket()` — the one reusable end-to-end path (fetch ticket → loop → publish requirements + ADR), composing every seam + tracing, returning a `PipelineResult`. A CLI, the poller, or a webhook all call this (D24). Memory namespaced by ticket key. | ✅ Done (integration) |
+| `src/agentic_memory/retry.py` | Transient-provider backoff (D25): `call_with_backoff` + `is_quota_error`/`is_overload_error` classify 429/`RESOURCE_EXHAUSTED` and 503/`UNAVAILABLE`/overload. The scripts ride out throttling (incl. Vertex DSQ) with exponential backoff instead of dying on the first 429. Dependency-free. | ✅ Done |
 
-`117 passed` offline (renderers, fakes, seam pass-through — zero keys/services). Plus four
+`135 passed` offline (renderers, fakes, seam pass-through — zero keys/services). Plus four
 gated opt-in suites, all passing: `-m live` (real provider calls + end-to-end loop), `-m graph`
 (11 tests, `GraphitiMemoryStore` ≡ fake against dockerized Neo4j), `-m jira` (mocked-transport
 + env-gated live fetch/publish), and `-m observability` (Langfuse tracer via injected mock
@@ -132,19 +133,29 @@ uv run --extra live python -m pytest -m live -v   # makes real API calls (costs 
 
 **Enterprise option — Vertex AI Model Garden (D25).** To run both models under one GCP project
 (unified billing/IAM/data-residency and enterprise quotas — no consumer free-tier 503/429), use the
-`vertex` extra and Application Default Credentials instead of API keys:
+`vertex` extra and Application Default Credentials instead of API keys. **There are no API tokens to
+create** — Vertex auths via ADC:
 
 ```bash
-gcloud auth application-default login                 # or set a service account
-export GOOGLE_CLOUD_PROJECT=your-project              # + optional VERTEX_REGION / VERTEX_LOCATION
-uv run --extra vertex --extra jira python scripts/live_demo.py --jira SCRUM-5 --publish --vertex
-# or set MODEL_PROVIDER=vertex in .env and drop the --vertex flag; the poller takes --vertex too.
+gcloud auth application-default login                          # browser consent → writes ADC
+gcloud auth application-default set-quota-project <project>    # bill/quota the right project
+# in .env: MODEL_PROVIDER=vertex, GOOGLE_CLOUD_PROJECT=<project>, VERTEX_SA_MODEL=claude-opus-4-8,
+#          VERTEX_REGION=global (Opus 4.8's region), VERTEX_LOCATION=us-central1 (Gemini)
+uv run --extra vertex --extra jira python scripts/live_demo.py --jira SCRUM-5 --vertex
+# MODEL_PROVIDER=vertex makes it the default; or pass --vertex per run. The poller takes --vertex too.
 ```
 
-Same `ModelClient` seam, so agents/loop/poller are unchanged. Claude on Vertex is region-gated
-(default `us-east5`); Gemini defaults to `us-central1`. Model ids may need a Model-Garden version
-suffix (e.g. `claude-sonnet-4-5@20250929`) — override per project. The eventual enterprise runtime is
-**Vertex Agent Engine**; this is step 1 (models), with Cloud Run hosting next (see `DECISIONS.md` D25).
+Same `ModelClient` seam, so agents/loop/poller are unchanged. Each role's model + region are
+env-overridable (`VERTEX_BA_MODEL`/`VERTEX_SA_MODEL`, `VERTEX_LOCATION`/`VERTEX_REGION`); Claude is
+region-gated (Opus 4.8 is served in `global`), Gemini defaults to `us-central1`.
+
+> ⚠️ **A newly-enabled Claude model on a fresh project starts with ~0 quota.** The first call 429s
+> (`Quota exceeded … online_prediction_requests_per_base_model … base_model: anthropic-claude-opus`) —
+> a **429, not a 404**, so auth/model/region are fine; only quota is missing. Request an increase:
+> Console → **Quotas & System Limits** → Service **Vertex AI API** → that metric → region **Global** →
+> the `anthropic-claude-*` base model → Edit/request. The `retry.py` backoff rides out *transient*
+> throttling (Vertex DSQ), but a hard zero-quota 429 needs the console grant. The eventual enterprise
+> runtime is **Vertex Agent Engine**; this is step 1 (models), Cloud Run hosting next (`DECISIONS.md` D25).
 
 To exercise the **real graph store** you need the `graph` extra and Neo4j running:
 
@@ -260,7 +271,8 @@ assert replay_final_state(log) is fsm.state   # the log replays to identical sta
 │   ├── eval.py              # advisory scorers + LLM judge + judge-vs-human κ ✅ (D21)
 │   ├── agents.py            # BAAgent / SAAgent (schema-in-prompt, D14)
 │   ├── loop.py              # run_loop — the FSM-driven roundtrip
-│   └── pipeline.py          # process_ticket — reusable end-to-end path (ticket→loop→publish) ✅ (D24)
+│   ├── pipeline.py          # process_ticket — reusable end-to-end path (ticket→loop→publish) ✅ (D24)
+│   └── retry.py             # call_with_backoff + 429/503 classification (transient-provider backoff) ✅ (D25)
 ├── scripts/live_demo.py     # one command: ticket → ADR + token usage (+ --graph, --jira, --runs)
 ├── scripts/serve_jira.py    # background poller: ai-dlc-labelled tickets → process_ticket → publish ✅ (D24)
 ├── scripts/run_scenarios.py # run the frozen scenario set; prints fingerprint + summary
@@ -314,6 +326,15 @@ fake so the loop runs offline, and going live = implementing the same interface 
 2. **Real graph store** — ✅ swap #2 (D15): `GraphitiMemoryStore` over Neo4j; 11 parity tests; `--graph`.
 3. **JIRA in** — ✅ swap #3 (D16): `JiraTicketSource` pulls real tickets; `--jira KEY`.
 4. **Publish out** — ✅ D17: `AtlassianPublisher` — requirements → JIRA comment, ADR → Confluence page; `--publish`.
+
+**Since then — integration toward a real-ecosystem trial:**
+- **Event-driven entry point** — ✅ D24: `process_ticket()` (`pipeline.py`) is the one reusable
+  ticket→loop→publish path; `scripts/serve_jira.py` is a label-driven poller (a human adds `ai-dlc`,
+  the swarm drafts back, marks `ai-dlc-done`). Humans still decide at the review surface.
+- **Vertex AI Model Garden backend** — ✅ D25: `make_model_client(provider="vertex")` runs Gemini + Claude
+  under one GCP project (ADC auth, enterprise quotas) behind the same seam; `retry.py` rides out 429/503
+  throttling. The enterprise's mandated runtime is **Agent Engine**; this is step 1 (models), Cloud Run
+  hosting next. *(Live pilot currently waiting on a Claude Opus 4.8 quota grant — see `Plans/silly-wishing-newt.md`.)*
 
 ### What's next — Stage 3, the hypothesis gate
 
