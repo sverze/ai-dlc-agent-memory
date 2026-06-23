@@ -558,3 +558,39 @@ verdict gates the *evolution*, not the *plumbing*. So we start plugging it into 
 **Next, toward the trial (not yet built):** Miro output adapter (once Miro creds land), the SA↔human
 conversational review loop (north-star A), paid model tiers (free-tier quota won't sustain a pilot),
 then a shadow-mode pilot on a real team. A webhook trigger is a later alternative to the poller.
+
+## D25 — Vertex AI Model Garden as a model backend; Agent Engine is the eventual runtime ✅ (2026-06-23)
+
+**Context.** The enterprise (the eventual work target, per TELOS) standardizes on **Vertex AI / Agent
+Engine** for running agents. Vertex Model Garden serves *both* our providers — Gemini (BA) and Claude
+(SA: Opus 4.8 / Sonnet 4.5 / Haiku 4.5) — under one GCP project. That gives unified billing, IAM,
+data residency, and **enterprise quotas** (no consumer free-tier 503/429 — the "provider busy" pain).
+
+**Decision (built).** Add a Vertex backend behind the existing `ModelClient` seam (D8/D11), so agents,
+`run_loop`, and `process_ticket` are untouched:
+- `VertexAnthropicModelClient(AnthropicModelClient)` and `VertexGeminiModelClient(GeminiModelClient)` —
+  each **inherits its own backend's `complete()` verbatim** (AnthropicVertex keeps `messages.create`;
+  genai Vertex-mode keeps `generate_content`), overriding **only** SDK construction (project + region,
+  ADC auth, no API keys). The two are never conflated — proved by a method-identity test, because the
+  one real risk of subclass-reuse is sharing a `complete()` across two different SDK shapes.
+- Region defaults split by backend (Claude is region-gated): Anthropic → `us-east5`, Gemini →
+  `us-central1`; both env-overridable, fail-fast on missing `GOOGLE_CLOUD_PROJECT`.
+- `make_model_client(provider="vertex")` (or `MODEL_PROVIDER=vertex`, or `--vertex` on the scripts)
+  routes by persona exactly like the direct factory. New optional `vertex` extra
+  (`anthropic[vertex]`, `google-genai`); offline path never imports them (D11). 10 offline tests; 127 total.
+
+**Vertex model ids** may need a publisher/version suffix (e.g. `claude-sonnet-4-5@20250929`) per the
+project's Model Garden — `DEFAULT_VERTEX_MODEL_BY_ROLE` is the configurable default, overridable.
+
+**Deliberately NOT done — and why.** We did **not** adopt **Agent Engine** as the runtime yet, nor
+**Cloud Workflows** at all:
+- *Cloud Workflows* — rejected. We already have the deterministic in-process FSM (the load-bearing
+  determinism of the whole design); moving it into YAML would scatter tested logic. Cloud Run +
+  Scheduler covers triggering more simply.
+- *Agent Engine* — deferred (not rejected). It's the mandated enterprise runtime, so it IS the eventual
+  deployment target, but it's opinionated around Google's ADK + its own session/memory bank, which
+  overlaps our FSM and our L4 Graphiti memory. Adopting it wholesale now means rebuilding orchestration
+  before the V1 gate holds — premature. Path: (1) ship the Vertex *model* backend now (done); (2) host
+  the poller/webhook on **Cloud Run** for the pilot; (3) study Agent Engine's memory bank as input to
+  the V2 memory-evolution plan; (4) port to Agent Engine's runtime once the gate holds and the enterprise
+  mandate bites. The seam design means each step is swap-not-rewrite.

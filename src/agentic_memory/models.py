@@ -62,6 +62,15 @@ DEFAULT_MODEL_BY_ROLE: dict[AgentPersona, str] = {
     AgentPersona.SOLUTION_ARCHITECT: "claude-sonnet-4-6",
 }
 
+# Same two roles, but Vertex AI Model Garden model ids (D25). Both Gemini and Claude
+# run under a single GCP project — one billing/governance/IAM plane, enterprise quotas.
+# Vertex Claude ids may need a publisher/version suffix (e.g. ``claude-sonnet-4-5@20250929``)
+# depending on the project's Model Garden; these are the configurable defaults.
+DEFAULT_VERTEX_MODEL_BY_ROLE: dict[AgentPersona, str] = {
+    AgentPersona.BUSINESS_ANALYST: "gemini-2.5-flash",
+    AgentPersona.SOLUTION_ARCHITECT: "claude-sonnet-4-5",
+}
+
 
 class ModelClient(ABC):
     """The single seam agents call instead of a provider SDK.
@@ -371,6 +380,94 @@ _GEMINI_ROLE: dict[MessageRole, str] = {
 }
 
 
+# --- Vertex AI Model Garden clients (D25) ----------------------------------
+#
+# The enterprise target standardizes on Vertex AI, so both providers route through
+# one GCP project. These reuse the parent clients' wire-mapping and usage handling
+# *unchanged* — the ONLY difference is how the SDK client is constructed (Vertex
+# auth via project/region, not a raw API key). Tests inject ``client=`` to exercise
+# the inherited ``complete()`` offline; the SDK import stays lazy, so the offline
+# path never requires the vertex extra. Credentials come from Application Default
+# Credentials (gcloud auth / a service account) — never an API key in code.
+
+
+def _vertex_project(project_id: str | None) -> str:
+    project = (
+        project_id
+        or os.getenv("GOOGLE_CLOUD_PROJECT")
+        or os.getenv("VERTEX_PROJECT_ID")
+        or ""
+    )
+    if not project:
+        raise RuntimeError(
+            "GOOGLE_CLOUD_PROJECT (or VERTEX_PROJECT_ID) not set — export it or pass "
+            "project_id= ; Vertex auth uses Application Default Credentials "
+            "(run `gcloud auth application-default login` or set a service account)."
+        )
+    return project
+
+
+class VertexAnthropicModelClient(AnthropicModelClient):
+    """Claude via Vertex AI Model Garden (``anthropic.AnthropicVertex``).
+
+    Inherits ``complete()`` from :class:`AnthropicModelClient` verbatim — AnthropicVertex
+    exposes the same ``messages.create`` surface — so only construction differs.
+    """
+
+    def __init__(
+        self,
+        *,
+        project_id: str | None = None,
+        region: str | None = None,
+        client: object | None = None,
+        model_by_role: dict[AgentPersona, str] | None = None,
+        max_tokens: int = DEFAULT_MAX_TOKENS,
+    ) -> None:
+        if client is None:
+            project = _vertex_project(project_id)
+            region = region or os.getenv("VERTEX_REGION") or os.getenv("CLOUD_ML_REGION") or "us-east5"
+            from anthropic import AnthropicVertex  # lazy: offline import must not require the SDK
+
+            client = AnthropicVertex(project_id=project, region=region)
+        super().__init__(
+            client=client,
+            model_by_role=model_by_role or DEFAULT_VERTEX_MODEL_BY_ROLE,
+            max_tokens=max_tokens,
+        )
+
+
+class VertexGeminiModelClient(GeminiModelClient):
+    """Gemini via Vertex AI (``google-genai`` in Vertex mode).
+
+    Inherits ``complete()`` from :class:`GeminiModelClient` verbatim — the genai client
+    in Vertex mode exposes the same ``models.generate_content`` surface.
+    """
+
+    def __init__(
+        self,
+        *,
+        project_id: str | None = None,
+        location: str | None = None,
+        client: object | None = None,
+        model_by_role: dict[AgentPersona, str] | None = None,
+    ) -> None:
+        if client is None:
+            project = _vertex_project(project_id)
+            location = (
+                location
+                or os.getenv("VERTEX_LOCATION")
+                or os.getenv("GOOGLE_CLOUD_LOCATION")
+                or "us-central1"
+            )
+            from google import genai  # lazy: offline import must not require the SDK
+
+            client = genai.Client(vertexai=True, project=project, location=location)
+        super().__init__(
+            client=client,
+            model_by_role=model_by_role or DEFAULT_VERTEX_MODEL_BY_ROLE,
+        )
+
+
 class RoutingModelClient(ModelClient):
     """Routes each persona to its own real client — the drop-in for ``FakeModelClient``.
 
@@ -406,23 +503,62 @@ class RoutingModelClient(ModelClient):
         )
 
 
+def make_vertex_model_client(
+    *,
+    project_id: str | None = None,
+    region: str | None = None,
+    location: str | None = None,
+    model_by_role: dict[AgentPersona, str] | None = None,
+) -> ModelClient:
+    """Build the Vertex-backed persona-routing client: BA → Gemini, SA → Claude (D25).
+
+    Both providers run under one GCP project via Vertex AI Model Garden — unified
+    billing/IAM/data-residency and enterprise quotas (no consumer free-tier 503s).
+    Auth is Application Default Credentials; no API keys. Raises a clear ``RuntimeError``
+    naming the missing project var if GCP config is absent. Drop-in for the direct client.
+    """
+    merged = {**DEFAULT_VERTEX_MODEL_BY_ROLE, **(model_by_role or {})}
+    return RoutingModelClient(
+        {
+            AgentPersona.BUSINESS_ANALYST: VertexGeminiModelClient(
+                project_id=project_id, location=location, model_by_role=merged
+            ),
+            AgentPersona.SOLUTION_ARCHITECT: VertexAnthropicModelClient(
+                project_id=project_id, region=region, model_by_role=merged
+            ),
+        }
+    )
+
+
 def make_model_client(
     *,
+    provider: str | None = None,
     anthropic_key: str | None = None,
     gemini_key: str | None = None,
     model_by_role: dict[AgentPersona, str] | None = None,
 ) -> ModelClient:
     """Build the real persona-routing client: BA → Gemini, SA → Anthropic.
 
-    Reads keys from the environment unless passed explicitly. Raises a clear
-    ``RuntimeError`` (via the sub-clients) if a required key is missing — the
+    ``provider`` selects the backend (defaults to env ``MODEL_PROVIDER`` then ``"direct"``):
+      - ``"direct"`` — consumer API keys (``ANTHROPIC_API_KEY`` / ``GEMINI_API_KEY``).
+      - ``"vertex"`` — both models via Vertex AI Model Garden under one GCP project (D25);
+        delegates to :func:`make_vertex_model_client` (keys args are ignored).
+
+    Reads keys/config from the environment unless passed explicitly. Raises a clear
+    ``RuntimeError`` (via the sub-clients) if a required key/var is missing — the
     drop-in replacement for ``FakeModelClient()`` in a real run.
 
-    ``model_by_role`` overrides the D8 defaults per persona (merged, so a partial
+    ``model_by_role`` overrides the per-role model defaults (merged, so a partial
     override keeps the other role's binding) — useful when a free-tier per-model
     daily quota is exhausted (e.g. swap the BA to ``gemini-2.5-flash-lite``, which
     draws from a separate quota bucket).
     """
+    provider = (provider or os.getenv("MODEL_PROVIDER") or "direct").lower()
+    if provider == "vertex":
+        return make_vertex_model_client(model_by_role=model_by_role)
+    if provider != "direct":
+        raise ValueError(f"unknown model provider {provider!r} (expected 'direct' or 'vertex')")
+
     merged = {**DEFAULT_MODEL_BY_ROLE, **(model_by_role or {})}
     return RoutingModelClient(
         {

@@ -90,6 +90,7 @@ from .runs import RunRecord, load_runs, run_exists, save_run
 from .pipeline import PipelineResult, process_ticket
 from .models import (
     DEFAULT_MODEL_BY_ROLE,
+    DEFAULT_VERTEX_MODEL_BY_ROLE,
     AnthropicModelClient,
     FakeModelClient,
     GeminiModelClient,
@@ -100,7 +101,10 @@ from .models import (
     ModelResponse,
     RoutingModelClient,
     Usage,
+    VertexAnthropicModelClient,
+    VertexGeminiModelClient,
     make_model_client,
+    make_vertex_model_client,
 )
 from .fsm import (
     ALLOWED_TRANSITIONS,
@@ -208,6 +212,7 @@ __all__ = [
     "make_memory_store",
     # models
     "DEFAULT_MODEL_BY_ROLE",
+    "DEFAULT_VERTEX_MODEL_BY_ROLE",
     "AnthropicModelClient",
     "FakeModelClient",
     "GeminiModelClient",
@@ -218,7 +223,10 @@ __all__ = [
     "ModelResponse",
     "RoutingModelClient",
     "Usage",
+    "VertexAnthropicModelClient",
+    "VertexGeminiModelClient",
     "make_model_client",
+    "make_vertex_model_client",
     # fsm
     "ALLOWED_TRANSITIONS",
     "TERMINAL_STATES",

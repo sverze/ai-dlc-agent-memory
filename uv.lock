@@ -23,6 +23,10 @@ live = [
 observability = [
     { name = "langfuse" },
 ]
+vertex = [
+    { name = "anthropic", extra = ["vertex"] },
+    { name = "google-genai" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -33,7 +37,9 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "anthropic", marker = "extra == 'live'", specifier = ">=0.40" },
+    { name = "anthropic", extras = ["vertex"], marker = "extra == 'vertex'", specifier = ">=0.40" },
     { name = "google-genai", marker = "extra == 'live'", specifier = ">=1.0" },
+    { name = "google-genai", marker = "extra == 'vertex'", specifier = ">=1.0" },
     { name = "graphiti-core", extras = ["kuzu"], marker = "extra == 'graph'", specifier = ">=0.29" },
     { name = "httpx", marker = "extra == 'jira'", specifier = ">=0.27" },
     { name = "langfuse", marker = "extra == 'observability'", specifier = ">=4,<5" },
@@ -72,6 +78,11 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/54/0b/ce24a4f275573f5e436ca954faca60c759d58ed152b8fa36a1e3b888e261/anthropic-0.109.1.tar.gz", hash = "sha256:83e06b3d9d40ff5898f588020e0cc4e42187de954549a3b5fbe6e2685a09c785", size = 927569 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/91/0f/a6110d713370bc92f074a622f8a5ebdec7e92360149b1048dca258a07b2f/anthropic-0.109.1-py3-none-any.whl", hash = "sha256:ce7d94a7657f2aa29338cca448945eac621b4f62c1794cf461cb32847223e9b8", size = 923851 },
+]
+
+[package.optional-dependencies]
+vertex = [
+    { name = "google-auth", extra = ["requests"] },
 ]
 
 [[package]]

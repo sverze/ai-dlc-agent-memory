@@ -9,6 +9,10 @@ dependencies = ["pydantic>=2.6"]
 # Real provider SDKs — only needed to run against live models. The offline path
 # (FakeModelClient + the full default test suite) imports without these.
 live = ["anthropic>=0.40", "google-genai>=1.0"]
+# Vertex AI Model Garden — both Gemini and Claude under one GCP project (D25).
+# anthropic[vertex] pulls google-auth for ADC; google-genai runs in Vertex mode.
+# Offline path never needs these (D11).
+vertex = ["anthropic[vertex]>=0.40", "google-genai>=1.0"]
 # Real temporal graph (L4) — Graphiti over Kuzu (embedded, local dev) or Neo4j
 # (shared/demo via docker-compose). Offline path never needs these (D11).
 graph = ["graphiti-core[kuzu]>=0.29"]

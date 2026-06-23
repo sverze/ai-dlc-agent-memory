@@ -78,7 +78,7 @@ both — that's decision D11, and the gated parity tests prove it holds.
 | `src/agentic_memory/artifacts.py` | Typed data contracts: `RequirementsArtifact`, `ADR` (with `RequirementTrace` / `AddedConstraint` encoding the eval rubric), `KnowledgeEntry` write envelope | ✅ Done |
 | `src/agentic_memory/events.py` | Append-only JSONL `EventLog` with monotonic sequence numbers + `replay()` reducer | ✅ Done |
 | `src/agentic_memory/fsm.py` | `FSM` orchestrator: `intake → analysis ⇄ clarification → decision (+ escalation)`, whitelist transitions, clarify-round cap with forced escalation, `replay_final_state()` | ✅ Done |
-| `src/agentic_memory/models.py` | `ModelClient` seam + offline `FakeModelClient` + **real `AnthropicModelClient` / `GeminiModelClient`** (lazy SDK imports, env keys, fence-normalized) and `make_model_client()` routing factory with per-role model override (`--ba-model`). | ✅ Done (swaps #1/#1.5) |
+| `src/agentic_memory/models.py` | `ModelClient` seam + offline `FakeModelClient` + **real `AnthropicModelClient` / `GeminiModelClient`** (lazy SDK imports, env keys, fence-normalized) and `make_model_client()` routing factory with per-role model override (`--ba-model`). Plus **Vertex AI Model Garden** backend (D25): `VertexAnthropicModelClient` / `VertexGeminiModelClient` route both Claude + Gemini through one GCP project via `make_model_client(provider="vertex")` / `--vertex`. | ✅ Done (swaps #1/#1.5, +Vertex) |
 | `src/agentic_memory/graph.py` | L4 `MemoryStore` seam over Graphiti: node/edge types from our artifacts (D10), domain writes (`write_requirements`/`write_adr`), and omission + key-fact queries. Offline `InMemoryMemoryStore` fake. | ✅ Done |
 | `src/agentic_memory/graphiti_store.py` | **Real `GraphitiMemoryStore`** — the six seam primitives over graphiti-core EntityNode/EntityEdge on Neo4j (D15): namespaced uuids, lossless `attrs_json`, one event loop per store. 11 gated tests prove fake/real parity. | ✅ Done (swap #2) |
 | `src/agentic_memory/tickets.py` | `TicketSource` seam (D6/D16): `InMemoryTicketSource` fake + **real `JiraTicketSource`** (REST v3, basic auth, deterministic ADF→text flattening, mapped errors, `jira` extra). | ✅ Done (swap #3) |
@@ -129,6 +129,22 @@ uv sync --extra live
 # NOTE: use `python -m pytest`, not bare `pytest` — the console script misses the extra.
 uv run --extra live python -m pytest -m live -v   # makes real API calls (costs money)
 ```
+
+**Enterprise option — Vertex AI Model Garden (D25).** To run both models under one GCP project
+(unified billing/IAM/data-residency and enterprise quotas — no consumer free-tier 503/429), use the
+`vertex` extra and Application Default Credentials instead of API keys:
+
+```bash
+gcloud auth application-default login                 # or set a service account
+export GOOGLE_CLOUD_PROJECT=your-project              # + optional VERTEX_REGION / VERTEX_LOCATION
+uv run --extra vertex --extra jira python scripts/live_demo.py --jira SCRUM-5 --publish --vertex
+# or set MODEL_PROVIDER=vertex in .env and drop the --vertex flag; the poller takes --vertex too.
+```
+
+Same `ModelClient` seam, so agents/loop/poller are unchanged. Claude on Vertex is region-gated
+(default `us-east5`); Gemini defaults to `us-central1`. Model ids may need a Model-Garden version
+suffix (e.g. `claude-sonnet-4-5@20250929`) — override per project. The eventual enterprise runtime is
+**Vertex Agent Engine**; this is step 1 (models), with Cloud Run hosting next (see `DECISIONS.md` D25).
 
 To exercise the **real graph store** you need the `graph` extra and Neo4j running:
 

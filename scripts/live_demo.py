@@ -101,13 +101,14 @@ def _run_once(
     ba_model: str | None = None,
     publish: bool = False,
     trace: bool = False,
+    provider: str | None = None,
 ) -> dict:
     """One full loop run; returns measurable outcomes. Prints detail if verbose."""
     from agentic_memory import NullTracer, TracingModelClient, make_tracer
 
     log_path = Path(tempfile.mkdtemp()) / "events.jsonl"
     override = {AgentPersona.BUSINESS_ANALYST: ba_model} if ba_model else None
-    recorder = UsageRecorder(make_model_client(model_by_role=override))
+    recorder = UsageRecorder(make_model_client(provider=provider, model_by_role=override))
     # Langfuse tracing wraps the client; no-op (NullTracer) unless LANGFUSE_* keys are set.
     tracer = make_tracer() if trace else NullTracer()
     client = TracingModelClient(recorder, tracer) if trace else recorder
@@ -339,6 +340,9 @@ def main() -> int:
     trace = "--trace" in args  # send per-agent metrics to Langfuse (needs LANGFUSE_* env)
     if trace:
         args.remove("--trace")
+    provider = "vertex" if "--vertex" in args else None  # route both models via Vertex (D25)
+    if provider:
+        args.remove("--vertex")
 
     if jira_key:
         from agentic_memory import JiraTicketSource  # needs the `jira` extra
@@ -358,7 +362,7 @@ def main() -> int:
         if runs > 1:
             print(f"\n--- run {n + 1}/{runs} ---")
         r = _run_once(ticket, verbose=(n == 0), use_graph=use_graph, ba_model=ba_model,
-                      publish=publish, trace=trace)
+                      publish=publish, trace=trace, provider=provider)
         if not r.get("ok"):
             print(f"  ❌ run {n + 1} failed: {r.get('error')}")
         results.append(r)

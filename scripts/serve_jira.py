@@ -49,7 +49,7 @@ def _is_quota_error(exc: Exception) -> bool:
     return "429" in s or "RESOURCE_EXHAUSTED" in s or "quota" in s.lower()
 
 
-def _sweep(*, jira, use_graph: bool, ba_model: str | None) -> int:
+def _sweep(*, jira, use_graph: bool, ba_model: str | None, provider: str | None) -> int:
     from agentic_memory import AgentPersona
 
     trigger = os.getenv("AIDLC_TRIGGER_LABEL", "ai-dlc")
@@ -65,7 +65,8 @@ def _sweep(*, jira, use_graph: bool, ba_model: str | None) -> int:
         store = GraphitiMemoryStore() if use_graph else InMemoryMemoryStore()
         try:
             res = process_ticket(
-                key, source=jira, model_client=make_model_client(model_by_role=override),
+                key, source=jira,
+                model_client=make_model_client(provider=provider, model_by_role=override),
                 store=store, publisher=make_publisher(), tracer=make_tracer(),
             )
             print(f"      {res.final_state}: reqs={res.requirements_count} omitted={res.omitted_count} "
@@ -90,9 +91,13 @@ def main() -> int:
         args.remove("--graph")
     ba_model = args[args.index("--ba-model") + 1] if "--ba-model" in args else None
     watch = int(args[args.index("--watch") + 1]) if "--watch" in args else 0
+    provider = "vertex" if "--vertex" in args else None  # route both models via Vertex (D25)
 
-    if not (os.getenv("ATLASSIAN_URL") and os.getenv("ANTHROPIC_API_KEY")):
-        print("Set ATLASSIAN_* + ANTHROPIC_API_KEY + GEMINI_API_KEY in .env first.")
+    # Direct providers need ANTHROPIC_API_KEY; Vertex needs a GCP project instead.
+    have_models = os.getenv("GOOGLE_CLOUD_PROJECT") if provider == "vertex" else os.getenv("ANTHROPIC_API_KEY")
+    if not (os.getenv("ATLASSIAN_URL") and have_models):
+        need = "ATLASSIAN_* + GOOGLE_CLOUD_PROJECT" if provider == "vertex" else "ATLASSIAN_* + ANTHROPIC_API_KEY + GEMINI_API_KEY"
+        print(f"Set {need} in .env first.")
         return 2
 
     jira = JiraTicketSource()
@@ -101,12 +106,12 @@ def main() -> int:
     print("═" * 72)
 
     if not watch:
-        _sweep(jira=jira, use_graph=use_graph, ba_model=ba_model)
+        _sweep(jira=jira, use_graph=use_graph, ba_model=ba_model, provider=provider)
         return 0
 
     print(f"  watching — polling every {watch}s (Ctrl-C to stop)")
     while True:
-        _sweep(jira=jira, use_graph=use_graph, ba_model=ba_model)
+        _sweep(jira=jira, use_graph=use_graph, ba_model=ba_model, provider=provider)
         time.sleep(watch)
 
 
