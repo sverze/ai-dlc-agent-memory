@@ -143,8 +143,14 @@ To pull **real JIRA tickets** (and write results back), you need the `jira` extr
 ```bash
 uv run --extra jira python -m pytest -m jira -v   # mocked-transport tests + env-gated live fetch/publish
 # complete pipeline: pull from JIRA → run → publish back (requirements comment + Confluence ADR page):
-uv run --extra live --extra graph --extra jira python scripts/live_demo.py --graph --jira SCRUM-1 --publish
+uv run --extra live --extra graph --extra jira python scripts/live_demo.py --graph --jira SCRUM-5 --publish
 ```
+
+> **No specific ticket required.** The live *fetch* test **discovers** the most recently created
+> issue on your site (newest first) rather than assuming a fixed key — so `-m jira` passes on any
+> Atlassian site. Set `JIRA_TEST_TICKET=<KEY>` to pin a specific ticket. The live *publish* test only
+> runs when `JIRA_TEST_TICKET` names a **sandbox ticket** (it posts a real comment) — otherwise it
+> skips, never auto-writing to a discovered ticket.
 
 **What a human sees (the review surface, D17).** `--publish` writes back additively: the BA's
 requirements become a **comment on the source ticket**, and the SA's ADR becomes a **Confluence

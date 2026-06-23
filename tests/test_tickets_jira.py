@@ -8,7 +8,6 @@ Two layers:
 """
 
 import json
-import os
 
 import pytest
 
@@ -89,13 +88,6 @@ def test_missing_env_raises_named_var(monkeypatch):
         JiraTicketSource()
 
 
-_HAVE_ENV = bool(
-    os.getenv("ATLASSIAN_URL")
-    and os.getenv("ATLASSIAN_EMAIL")
-    and (os.getenv("ATLASSIAN_API_TOKEN") or os.getenv("ATLASIAN_API_TOKEN"))
-)
-
-
 def test_search_returns_keys():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path == "/rest/api/3/search/jql"
@@ -120,11 +112,13 @@ def test_add_label_puts_update():
     assert seen["body"] == {"update": {"labels": [{"add": "ai-dlc-done"}]}}
 
 
-@pytest.mark.skipif(not _HAVE_ENV, reason="ATLASSIAN_* env not set")
-def test_live_fetch_real_ticket():
-    """Fetches the ticket named in JIRA_TEST_TICKET (default SCRUM-1) from the real site."""
-    key = os.getenv("JIRA_TEST_TICKET", "SCRUM-1")
-    t = JiraTicketSource().fetch(key)
-    assert t.id == key
+def test_live_fetch_real_ticket(live_jira_read_key):
+    """Fetches a real, discovered ticket from the live site (no hardcoded key).
+
+    ``live_jira_read_key`` (conftest) resolves to an explicit JIRA_TEST_TICKET or, failing
+    that, the most-recently-created issue via search() — and skips if env/issues are absent.
+    """
+    t = JiraTicketSource().fetch(live_jira_read_key)
+    assert t.id == live_jira_read_key
     assert t.body.strip() != ""
-    print(f"\nLIVE TICKET {key}: {json.dumps(t.body[:200])}")
+    print(f"\nLIVE TICKET {live_jira_read_key}: {json.dumps(t.body[:200])}")

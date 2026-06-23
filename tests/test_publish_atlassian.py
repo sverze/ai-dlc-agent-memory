@@ -7,8 +7,6 @@ env-gated live publish to the user's sandbox.
     uv run --extra jira python -m pytest -m jira -v
 """
 
-import os
-
 import pytest
 
 httpx = pytest.importorskip("httpx", reason="jira extra not installed")
@@ -115,17 +113,13 @@ def test_missing_space_is_clear_error():
         _publisher(handler).publish_adr(_adr(), _artifact(), ticket_key="SCRUM-1")
 
 
-_HAVE_ENV = bool(
-    os.getenv("ATLASSIAN_URL")
-    and os.getenv("ATLASSIAN_EMAIL")
-    and (os.getenv("ATLASSIAN_API_TOKEN") or os.getenv("ATLASIAN_API_TOKEN"))
-)
+def test_live_publish_requirements_to_sandbox(live_jira_write_key):
+    """Posts a real requirements comment to a designated sandbox ticket.
 
-
-@pytest.mark.skipif(not _HAVE_ENV, reason="ATLASSIAN_* env not set")
-def test_live_publish_requirements_to_sandbox():
-    """Posts a real requirements comment to JIRA_TEST_TICKET (default SCRUM-1)."""
-    key = os.getenv("JIRA_TEST_TICKET", "SCRUM-1")
-    ref = AtlassianPublisher().publish_requirements(_artifact(), ticket_key=key)
+    ``live_jira_write_key`` (conftest) requires an explicit JIRA_TEST_TICKET — we never
+    auto-discover a write target, to avoid commenting on an arbitrary real work ticket.
+    Skips when no sandbox ticket is designated.
+    """
+    ref = AtlassianPublisher().publish_requirements(_artifact(), ticket_key=live_jira_write_key)
     assert ref
-    print(f"\nLIVE comment id on {key}: {ref}")
+    print(f"\nLIVE comment id on {live_jira_write_key}: {ref}")
