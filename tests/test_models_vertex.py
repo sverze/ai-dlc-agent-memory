@@ -124,6 +124,21 @@ def test_vertex_clients_inherit_matching_backend_complete():
     assert AnthropicModelClient.complete is not GeminiModelClient.complete
 
 
+def test_vertex_model_ids_overridable_by_env(monkeypatch):
+    """`.env` drives model selection: defaults < VERTEX_*_MODEL env < explicit arg."""
+    from agentic_memory.models import _vertex_models
+
+    monkeypatch.setenv("VERTEX_SA_MODEL", "claude-opus-4-8")
+    monkeypatch.delenv("VERTEX_BA_MODEL", raising=False)
+    resolved = _vertex_models(None)
+    assert resolved[AgentPersona.SOLUTION_ARCHITECT] == "claude-opus-4-8"  # env override
+    assert resolved[AgentPersona.BUSINESS_ANALYST] == "gemini-2.5-flash"   # default kept
+
+    # an explicit per-call arg still wins over the env override
+    explicit = _vertex_models({AgentPersona.SOLUTION_ARCHITECT: "claude-sonnet-4-5"})
+    assert explicit[AgentPersona.SOLUTION_ARCHITECT] == "claude-sonnet-4-5"
+
+
 def test_vertex_region_defaults_split_by_backend(monkeypatch):
     """Claude-on-Vertex is region-gated (us-east5), Gemini lives elsewhere (us-central1).
     The defaults must differ per backend — a shared region would 404 one provider."""

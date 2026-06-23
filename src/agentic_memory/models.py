@@ -503,6 +503,22 @@ class RoutingModelClient(ModelClient):
         )
 
 
+def _vertex_models(
+    model_by_role: dict[AgentPersona, str] | None,
+) -> dict[AgentPersona, str]:
+    """Resolve Vertex model ids: defaults < ``VERTEX_BA_MODEL``/``VERTEX_SA_MODEL`` env < explicit arg.
+
+    The env overrides let ``.env`` point each role at exactly what's enabled in the
+    project's Model Garden (e.g. ``VERTEX_SA_MODEL=claude-opus-4-8``) without code edits.
+    """
+    env_models: dict[AgentPersona, str] = {}
+    if os.getenv("VERTEX_BA_MODEL"):
+        env_models[AgentPersona.BUSINESS_ANALYST] = os.environ["VERTEX_BA_MODEL"]
+    if os.getenv("VERTEX_SA_MODEL"):
+        env_models[AgentPersona.SOLUTION_ARCHITECT] = os.environ["VERTEX_SA_MODEL"]
+    return {**DEFAULT_VERTEX_MODEL_BY_ROLE, **env_models, **(model_by_role or {})}
+
+
 def make_vertex_model_client(
     *,
     project_id: str | None = None,
@@ -516,8 +532,12 @@ def make_vertex_model_client(
     billing/IAM/data-residency and enterprise quotas (no consumer free-tier 503s).
     Auth is Application Default Credentials; no API keys. Raises a clear ``RuntimeError``
     naming the missing project var if GCP config is absent. Drop-in for the direct client.
+
+    Model ids resolve via :func:`_vertex_models` (env-overridable); region/location default
+    per backend (Claude → ``us-east5``/env, Gemini → ``us-central1``/env). For Opus 4.8 set
+    ``VERTEX_SA_MODEL=claude-opus-4-8`` and ``VERTEX_REGION=global`` (its served region).
     """
-    merged = {**DEFAULT_VERTEX_MODEL_BY_ROLE, **(model_by_role or {})}
+    merged = _vertex_models(model_by_role)
     return RoutingModelClient(
         {
             AgentPersona.BUSINESS_ANALYST: VertexGeminiModelClient(
